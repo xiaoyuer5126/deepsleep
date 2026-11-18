@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { LinkedMessage, TranslationMessage } from '../i18n/index.js'
-import { uploadFile } from './api/client.js'
+import { ApiError, uploadFile } from './api/client.js'
 import { classifyApiError, getUploadErrorInfo, isRetryableApiError } from './api/errors.js'
 import type { FilePurpose } from './api/types.js'
 import { ACCEPT_FILE_EXTS } from './uploadExts.js'
@@ -62,6 +62,17 @@ export const validateFiles = (files: File[], currentCount: number): TranslationM
  * 服务端原文多为英文且较长，不直接展示。
  */
 export const describeUploadError = (error: unknown): TranslationMessage => {
+  // 网关类错误先单独识别：Cloudflare 隧道对超大/超时请求会返回 413 / 524
+  const status = error instanceof ApiError ? error.status : undefined
+  if (status === 413) {
+    return { key: 'uploadTooLarge' }
+  }
+  if (status === 524 || status === 504) {
+    return { key: 'uploadTimeout' }
+  }
+  if (error instanceof ApiError && error.kind === 'network') {
+    return { key: 'uploadNetworkFailed' }
+  }
   if (classifyApiError(error) === 'serverBusy') {
     return { key: 'uploadServerBusy' }
   }

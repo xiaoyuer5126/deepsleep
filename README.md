@@ -259,8 +259,13 @@ PRICING_JSON={"models":{"deepseek-flash":{"inputCacheHit":0.02,"inputCacheMiss":
 说明：
 
 - 没填 token 时 `cloudflared` 容器会反复重启（日志提示缺少 token），填好后 `docker compose up -d` 即恢复，不影响应用容器。
-- 本机想直连调试：取消 `deepseek-web` 的 `ports` 注释（`"127.0.0.1:3080:3080"`，仅本机可访问），再 `docker compose up -d`。
-- `cloudflared` 官方镜像是 distroless（没有 shell），所以不支持容器内自动降级成 quick tunnel；临时试用可以在宿主机装一次 cloudflared 二进制跑 `cloudflared tunnel --url http://127.0.0.1:3080`，或按上面的方式配好 token。
+- **本机调试**：`deepseek-web` 默认映射了 `127.0.0.1:3081:3080`，浏览器打开 <http://localhost:3081> 即可（3080 常被其他程序占用，故用 3081）。不需要时可注释掉 `ports`。
+- **隧道速度**：`cloudflared` 默认用 `--protocol http2`（国内网络下 QUIC 抖动大时 http2 更稳更快）。若你的线路用 QUIC 更快，可改回 `--protocol quic` 或去掉该参数。
+- **为什么隧道可能很慢**：国内访问 Cloudflare 免费隧道通常会被调度到境外节点（如 LAX/FRA），请求要"出国再回来"，实测上传可能只有 ~100KB/s。文字聊天影响不大，但上传大文件建议：
+  - 同一局域网/本机直接用 `http://localhost:3081` 或 `http://<内网IP>:3081`（把 ports 改成 `"3081:3080"` 即允许局域网访问）；
+  - 或者用一台国内/香港 VPS + frp（或直接把整套 compose 部署到 VPS），速度取决于 VPS 线路；
+  - 家庭宽带如果是运营商 NAT（没有公网 IPv4），无法用「域名 A 记录直连家里端口」的方式；有公网 IPv6 的话理论上可以 AAAA + 端口放行 + DDNS，但地址会变、且没有 IPv6 的访客访问不了。
+- `cloudflared` 官方镜像是 distroless（没有 shell），所以不支持容器内自动降级成 quick tunnel；临时试用可以在宿主机装一次 cloudflared 二进制跑 `cloudflared tunnel --url http://127.0.0.1:3081`，或按上面的方式配好 token。
 
 ---
 

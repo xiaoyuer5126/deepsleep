@@ -10,10 +10,10 @@ services:
     image: deepseek-web-self:latest
     container_name: deepseek-web
     restart: unless-stopped
-    # 默认不向宿主机映射任何端口，只允许通过 cloudflared 隧道访问。
-    # 需要在本机直连调试时，取消注释下一行（仅监听 127.0.0.1）：
-    # ports:
-    #   - "127.0.0.1:3080:3080"
+    # 本机调试用：只监听 127.0.0.1:3081，可从宿主机直接访问 http://localhost:3081。
+    # 不调试时可注释掉，只保留 cloudflared 隧道访问（更安全）。
+    ports:
+      - "127.0.0.1:3081:3080"
     expose:
       - "3080"
     environment:
@@ -55,5 +55,5 @@ services:
     restart: unless-stopped
     depends_on:
       - deepseek-web
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: tunnel --no-autoupdate --protocol http2 run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
 

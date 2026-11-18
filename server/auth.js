@@ -83,7 +83,7 @@ export const createAuthRouter = ({ store, config }) => {
       userAgent: req.headers['user-agent'] ?? null,
     })
     store.touchLogin(user.id)
-    setSessionCookie(res, token, expiresAt, config)
+    setSessionCookie(res, token, expiresAt, config, req.secure)
     return expiresAt
   }
 
@@ -159,7 +159,7 @@ export const createAuthRouter = ({ store, config }) => {
         // Cookie 已损坏时直接清理客户端即可
       }
     }
-    clearSessionCookie(res, config)
+    clearSessionCookie(res, config, req.secure)
     res.json({ ok: true })
   })
 

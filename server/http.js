@@ -39,7 +39,13 @@ export const parseCookies = (header) => {
 
 export const SESSION_COOKIE = 'ds_session'
 
-export const setSessionCookie = (res, token, expiresAt, config) => {
+/**
+ * Secure 只在「本次请求确实是 HTTPS」时加：公网走 Cloudflare 隧道（带 X-Forwarded-Proto、
+ * TRUST_PROXY=true）会加 Secure；本机 http://localhost 调试时不加，否则浏览器不会保存/发送 Cookie。
+ */
+const shouldSecureCookie = (config, requestSecure) => config.cookieSecure && requestSecure
+
+export const setSessionCookie = (res, token, expiresAt, config, requestSecure = false) => {
   const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
   const parts = [
     `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
@@ -48,15 +54,15 @@ export const setSessionCookie = (res, token, expiresAt, config) => {
     'SameSite=Lax',
     `Max-Age=${maxAge}`,
   ]
-  if (config.cookieSecure) {
+  if (shouldSecureCookie(config, requestSecure)) {
     parts.push('Secure')
   }
   res.append('Set-Cookie', parts.join('; '))
 }
 
-export const clearSessionCookie = (res, config) => {
+export const clearSessionCookie = (res, config, requestSecure = false) => {
   const parts = [`${SESSION_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0']
-  if (config.cookieSecure) {
+  if (shouldSecureCookie(config, requestSecure)) {
     parts.push('Secure')
   }
   res.append('Set-Cookie', parts.join('; '))
