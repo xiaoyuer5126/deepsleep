@@ -9,7 +9,7 @@
 - **费用可见**：每条回答下方显示本次估算费用，侧边栏每条对话显示累计费用（口径与官方计费一致，见[费用估算](#九费用估算口径)）
 - **对话管理**：置顶 / 取消置顶、**点击标题就地重命名**、单条对话导出为 ZIP、侧边栏「导入对话」一键导入（默认追加，也可覆盖）
 - 品牌标识：站点名「DeepSleep」，使用自定义的睡眠鲸鱼图标
-- 全部运行在 Docker 里，宿主机只需要 Docker，不用装 Node / pnpm；**默认通过 `cloudflared` 隧道访问，应用容器不向宿主机暴露任何端口**
+- 全部运行在 Docker 里，宿主机只需要 Docker，不用装 Node / pnpm；**应用容器不向宿主机暴露端口，加入外部 docker 网络 `web-net`，由 nginx 反向代理访问 `http://deepseek-web:3080`**
 
 > 数据默认落在 `./data`：SQLite（会话、账号、附件 BLOB、API Key 密文）+ 自动生成的 `app-secret`。备份 = 拷走这个目录。
 
@@ -36,19 +36,40 @@
 ```bash
 # 1. 准备配置
 cp .env.example .env
-# 必填：在 Cloudflare Zero Trust 创建 tunnel 后把 token 填到 CLOUDFLARE_TUNNEL_TOKEN
-# 建议同时填 COOKIE_SECURE=true、TRUST_PROXY=true（走 HTTPS 隧道）
-# 可选：DEFAULT_DEEPSEEK_API_KEY=sk-...（服务器默认 Key，所有人共用）
+# 建议：APP_SECRET=随机 64 位 hex；DEFAULT_DEEPSEEK_API_KEY=sk-...（所有人共用的默认 Key）
+# nginx 反代 HTTPS 时保持 COOKIE_SECURE=true、TRUST_PROXY=true
 
-# 2. 构建并启动（应用容器不映射宿主机端口，只通过 cloudflared 隧道访问）
+# 2. 创建与 nginx 共用的 docker 网络（只需一次），然后启动
+docker network create web-net
 docker compose up -d --build
 
-# 3. 浏览器访问 Cloudflare 后台给该 tunnel 配置的域名（Public Hostname 指向 http://deepseek-web:3080）
-#    注册第一个账号即可使用
+# 3. 让 nginx 反代到容器：http://deepseek-web:3080
+#    完整 nginx 示例见 deploy/nginx.conf.example（第 10 节）
+#    浏览器访问你的域名 → 注册第一个账号
 ```
 
-> 没有 token 时 `cloudflared` 会反复重启（属正常，日志会提示缺少 token）。
-> 想先在本机直连调试：取消 `docker-compose.yml` 里 `deepseek-web` 的 `ports` 注释（仅监听 127.0.0.1:3080），再 `docker compose up -d`。
+> 应用容器**不映射宿主机端口**，只监听容器网络内的 3080。需要本机临时调试时，取消 `docker-compose.yml` 里 `ports` 的注释（`127.0.0.1:3081:3080`）再 `docker compose up -d`。
+
+### 部署到另一台服务器
+
+```bash
+# 本机：打包源码（只含 git 跟踪的文件，不含 data/、.env、node_modules）
+git archive -o deepsleep-src.tar.gz HEAD
+scp deepsleep-src.tar.gz .env user@server:/opt/deepsleep/
+
+# 服务器：解包并启动
+cd /opt/deepsleep
+tar -xzf deepsleep-src.tar.gz
+docker network create web-net          # 若已存在可跳过
+docker compose up -d --build
+# 然后按第 10 节把 nginx 反代到 http://deepseek-web:3080
+
+# 可选：把现有账号/历史一起搬过去
+# 本机：tar -czf data.tar.gz data && scp data.tar.gz user@server:/opt/deepsleep/
+# 服务器：cd /opt/deepsleep && tar -xzf data.tar.gz
+```
+
+> 服务器只需要 Docker（能访问 docker hub / npm 源、能访问 `api.deepseek.com`）。`.env` 里的 `APP_SECRET` 要与旧数据保持一致，否则已绑定的 API Key 需要重新绑定。
 
 ### 国内网络加速
 
@@ -153,8 +174,9 @@ docker compose up -d --build # 重新构建升级
 ```
 .
 ├── Dockerfile               # 多阶段构建：pnpm 构建前端 → 安装后端依赖 → 运行时镜像
-├── docker-compose.yml       # 生产用：应用容器 + ./data 数据卷 + 健康检查 + 可选 cloudflared
+├── docker-compose.yml       # 生产用：应用容器（加入外部网络 web-net）+ ./data + 健康检查
 ├── docker-compose.test.yml  # 联调用：mock DeepSeek API，不产生真实费用
+├── deploy/nginx.conf.example # nginx 反向代理示例（SSE / 上传 / HTTPS）
 ├── .env.example
 ├── web/                     # 前端（基于 deepseek-ai/chat-demo，MIT）
 │   └── src/
@@ -242,30 +264,61 @@ PRICING_JSON={"models":{"deepseek-flash":{"inputCacheHit":0.02,"inputCacheMiss":
 
 ---
 
-## 十、Cloudflare Tunnel（默认访问方式）
+## 十、Nginx 反向代理（默认访问方式）
 
-`cloudflared` 是 compose 里的默认服务，随 `docker compose up -d` 一起启动；**应用容器不向宿主机映射任何端口**（只 `expose` 给 compose 内网），唯一入口就是 Cloudflare 隧道：
+应用容器**不向宿主机暴露端口**，只加入外部 docker 网络 `web-net`，在容器内监听 `3080`；nginx（容器）通过 `http://deepseek-web:3080` 访问它，并把你的域名反代过来。
 
-1. Cloudflare Zero Trust → Networks → Tunnels → 新建 tunnel（选 cloudflared）→ 复制 token
-2. 在 `.env` 里填：
-   ```bash
-   CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoi...
-   COOKIE_SECURE=true      # 走 HTTPS，Cookie 需要 Secure
-   TRUST_PROXY=true        # 让登录限流拿到真实 IP
-   ```
-3. Cloudflare 后台给这个 tunnel 配 Public Hostname：子域名 → 服务填 `http://deepseek-web:3080`
-4. `docker compose up -d`，然后访问你的域名
+### 1. 准备共享网络
 
-说明：
+```bash
+docker network create web-net    # 只需一次
+```
 
-- 没填 token 时 `cloudflared` 容器会反复重启（日志提示缺少 token），填好后 `docker compose up -d` 即恢复，不影响应用容器。
-- **本机调试**：`deepseek-web` 默认映射了 `127.0.0.1:3081:3080`，浏览器打开 <http://localhost:3081> 即可（3080 常被其他程序占用，故用 3081）。不需要时可注释掉 `ports`。
-- **隧道速度**：`cloudflared` 默认用 `--protocol http2`（国内网络下 QUIC 抖动大时 http2 更稳更快）。若你的线路用 QUIC 更快，可改回 `--protocol quic` 或去掉该参数。
-- **为什么隧道可能很慢**：国内访问 Cloudflare 免费隧道通常会被调度到境外节点（如 LAX/FRA），请求要"出国再回来"，实测上传可能只有 ~100KB/s。文字聊天影响不大，但上传大文件建议：
-  - 同一局域网/本机直接用 `http://localhost:3081` 或 `http://<内网IP>:3081`（把 ports 改成 `"3081:3080"` 即允许局域网访问）；
-  - 或者用一台国内/香港 VPS + frp（或直接把整套 compose 部署到 VPS），速度取决于 VPS 线路；
-  - 家庭宽带如果是运营商 NAT（没有公网 IPv4），无法用「域名 A 记录直连家里端口」的方式；有公网 IPv6 的话理论上可以 AAAA + 端口放行 + DDNS，但地址会变、且没有 IPv6 的访客访问不了。
-- `cloudflared` 官方镜像是 distroless（没有 shell），所以不支持容器内自动降级成 quick tunnel；临时试用可以在宿主机装一次 cloudflared 二进制跑 `cloudflared tunnel --url http://127.0.0.1:3081`，或按上面的方式配好 token。
+nginx 容器也要加入这个网络（`external: true`）：
+
+```yaml
+services:
+  nginx:
+    image: nginx:stable
+    networks:
+      - web-net
+networks:
+  web-net:
+    external: true
+```
+
+### 2. 反代配置
+
+完整示例见 [`deploy/nginx.conf.example`](deploy/nginx.conf.example)，关键点：
+
+| 配置 | 原因 |
+|---|---|
+| `proxy_pass http://deepseek-web:3080;` | 容器名在 `web-net` 内可直接解析 |
+| `proxy_buffering off;` + `proxy_cache off;` | 流式回答（SSE）必须不缓冲，否则一个字不流、最后一次性出现 |
+| `proxy_read_timeout 3600s;` | 深度思考/长回答不要中途 504 |
+| `proxy_request_buffering off;` | 大文件上传边收边转发，避免 nginx 先落盘再转 |
+| `client_max_body_size 100m;` | 至少要 ≥ 应用的上传上限（默认 96MB） |
+| `proxy_set_header X-Forwarded-Proto $scheme;` | 后端据此给 Cookie 加 Secure（`.env` 里 `COOKIE_SECURE=true`、`TRUST_PROXY=true`） |
+| `proxy_set_header Host $host;` | 后端做同源校验（CSRF 防护） |
+
+### 3. 如果 nginx 跑在宿主机上（不是容器）
+
+宿主机 nginx 无法直接解析 `web-net` 里的容器名，需要临时把端口映射出来：
+
+```yaml
+# docker-compose.yml
+ports:
+  - "127.0.0.1:3081:3080"   # 只监听本机，再由宿主机 nginx 反代 http://127.0.0.1:3081
+```
+
+### 4. HTTPS
+
+证书由你的 nginx 负责（certbot / 云厂商托管证书均可）。跑在 HTTPS 后面时请在 `.env` 里保持：
+
+```bash
+COOKIE_SECURE=true
+TRUST_PROXY=true
+```
 
 ---
 
@@ -315,7 +368,7 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `PORT` | `3080` | 容器内监听端口（宿主端口在 compose 的 `ports` 改） |
+| `PORT` | `3080` | 容器内监听端口（保持 3080，由 nginx 反代） |
 | `DATA_DIR` | `/data` | 数据目录 |
 | `DEEPSEEK_API_BASE` | `https://api.deepseek.com` | 上游地址；测试时指向 mock |
 | `DEFAULT_DEEPSEEK_API_KEY` | 空 | 服务器默认 Key（账号未绑定时使用） |
@@ -323,14 +376,13 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 | `ALLOW_REGISTRATION` | `true` | 是否允许注册 |
 | `REGISTER_INVITE_CODE` | 空 | 非空时注册必须填写 |
 | `SESSION_DAYS` | `30` | 登录态有效天数 |
-| `COOKIE_SECURE` | `false` | HTTPS 部署时设 `true` |
-| `TRUST_PROXY` | `false` | 在反向代理 / tunnel 后面时设 `true`（取真实 IP 用于限流） |
+| `COOKIE_SECURE` | `true`（compose 默认） | nginx 反代 HTTPS 时保持 `true` |
+| `TRUST_PROXY` | `true`（compose 默认） | 在 nginx 后面时保持 `true`（取真实 IP、识别 X-Forwarded-Proto） |
 | `MAX_JSON_BYTES` | 48MB | 单条会话 JSON 上限 |
 | `MAX_UPLOAD_BYTES` | 96MB | 单个附件原件上限 |
 | `PRICING_JSON` | 官方价 | 覆盖费用估算单价，见[费用估算口径](#九费用估算口径) |
 | `LOG_REQUESTS` | 空 | 设为 `1` 时打印每个 API 请求的耗时/大小，排查上传或代理慢 |
 | `TZ` | `Asia/Shanghai` | 时区（高峰时段判断按北京时间，与容器时区无关） |
-| `CLOUDFLARE_TUNNEL_TOKEN` | 空（必填） | cloudflared 的 tunnel token，见[Cloudflare Tunnel](#十cloudflare-tunnel默认访问方式) |
 | `NPM_REGISTRY` | `https://registry.npmmirror.com` | 构建时 npm 源（仅构建阶段生效） |
 | `NODE_IMAGE` | `node:24-bookworm-slim` | 构建用基础镜像，可替换为国内镜像仓库地址 |
 
@@ -340,7 +392,7 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 
 ### 附件上传流程
 
-一次附件上传有两段，都经过 Cloudflare 隧道（浏览器 → Cloudflare 边缘 → 你的服务器）：
+一次附件上传有两段，都经过 nginx 反向代理（浏览器 → 你的域名/nginx → 应用容器）：
 
 1. **给模型用**：选中文件时立刻上传到 DeepSeek Files API（`/api/ds/anthropic/v1/files`，由后端代理，multipart 流式转发）。PDF/Word/PPT 会触发服务端版面解析，本身耗时。
 2. **给多端预览用**：把原件存进你服务器的 SQLite（图片缩略图、跨设备打开靠它）。
@@ -348,10 +400,10 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 优化点：
 
 - 第 2 段改为**选中文件时就与第 1 段并行上传**（`web/src/services/chat/drafts.ts`），并按附件 id 去重（`web/src/services/chat/db.ts` 的 `storedIds`），发送时不再串行叠加一次上传。
-- **非图片原件超过 8MB 不再存第二份**（历史里已有 DeepSeek `file_id`，跨设备只影响「打开原件」，不影响提问），避免大 PDF/PPT 把隧道上行带宽占满。
+- **非图片原件超过 8MB 不再存第二份**（历史里已有 DeepSeek `file_id`，跨设备只影响「打开原件」，不影响提问），避免大 PDF/PPT 把带宽占满。
 - 排查慢在哪：`.env` 里设 `LOG_REQUESTS=1`，然后 `docker compose logs -f deepseek-web`，可以看到每个请求的耗时和大小（例如 Files API 代理 vs 本地原件的时间占比）。
 
-> 提示：家用带宽 + 免费 Cloudflare 隧道的上行是主要瓶颈；如果经常传大文件，把 `deepseek-web` 的端口临时映射到本机（compose 里注释的 `ports`）并走局域网访问会明显更快。
+> 提示：nginx 侧务必按 [`deploy/nginx.conf.example`](deploy/nginx.conf.example) 配置 `proxy_request_buffering off;` 和足够大的 `client_max_body_size`，否则大文件上传会先在 nginx 落盘或直接 413；服务器上行带宽也会影响上传速度。
 
 ### 上下文管理
 

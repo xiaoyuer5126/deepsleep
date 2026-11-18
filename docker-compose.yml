@@ -10,12 +10,14 @@ services:
     image: deepseek-web-self:latest
     container_name: deepseek-web
     restart: unless-stopped
-    # 局域网访问：监听所有网卡，校园网内设备可用 http://<本机内网IP>:3081 访问。
-    # 只允许本机访问时改成 "127.0.0.1:3081:3080"；完全不想暴露端口就注释掉。
-    ports:
-      - "3081:3080"
+    # 不向宿主机暴露任何端口：由 nginx 通过共享 docker 网络访问 http://deepseek-web:3080
     expose:
       - "3080"
+    networks:
+      - web-net
+    # 需要在本机直连调试时，取消下面两行注释（仅本机可访问）：
+    # ports:
+    #   - "127.0.0.1:3081:3080"
     environment:
       PORT: "3080"
       DATA_DIR: "/data"
@@ -29,9 +31,11 @@ services:
       REGISTER_INVITE_CODE: ${REGISTER_INVITE_CODE:-}
       # 登录态有效天数
       SESSION_DAYS: ${SESSION_DAYS:-30}
-      # 通过 HTTPS 反向代理访问时设为 true，Cookie 会带 Secure
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      TRUST_PROXY: ${TRUST_PROXY:-false}
+      # 反向代理终止 TLS 时必须为 true：Cookie 带 Secure、并信任代理取真实 IP
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      # 调试：设为 1 时打印每个 API 请求的耗时与大小
+      LOG_REQUESTS: ${LOG_REQUESTS:-}
     volumes:
       # 全部数据（SQLite 数据库、附件原件、自动生成的密钥）都在这里，备份只需拷贝该目录
       - ./data:/data
@@ -46,14 +50,8 @@ services:
       retries: 3
       start_period: 10s
 
-  # Cloudflare Tunnel：默认随 compose 一起启动，把服务暴露到公网（HTTPS），
-  # 无需公网 IP / 端口映射。先在 .env 里填写 CLOUDFLARE_TUNNEL_TOKEN。
-  # 使用 token 方式时，Cloudflare 后台的 Public Hostname 指向：http://deepseek-web:3080
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: deepseek-web-tunnel
-    restart: unless-stopped
-    depends_on:
-      - deepseek-web
-    command: tunnel --no-autoupdate --protocol http2 run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
-
+networks:
+  # 与 nginx（或其它反代容器）共用的外部网络，需提前创建一次：
+  #   docker network create web-net
+  web-net:
+    external: true

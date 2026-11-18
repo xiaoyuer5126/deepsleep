@@ -1,0 +1,59 @@
+# DeepSleep 的 nginx 反向代理示例
+#
+# 前提：
+#   - 本文件放在 nginx 容器可读到的位置，nginx 容器需与 deepseek-web 加入同一个 docker 网络 web-net：
+#       docker network create web-net        # 只需一次
+#       # nginx 的 compose 里：
+#       # networks:
+#       #   - web-net
+#       # networks:
+#       #   web-net:
+#       #     external: true
+#   - DeepSleep 容器不暴露宿主机端口，nginx 通过容器名访问：http://deepseek-web:3080
+#
+# 注意 SSE（流式回答）和大文件上传必须按下面配置，否则会出现"回答不流式/上传失败/超时"。
+
+upstream deepsleep_backend {
+    server deepseek-web:3080;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    server_name deepsleep.example.com;
+    # 有证书时用 80 → 443 跳转；纯内网 http 也可以直接用
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;                      # nginx < 1.25 用：listen 443 ssl http2;
+    server_name deepsleep.example.com;
+
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+
+    # 附件上传上限：至少和 .env 的 MAX_UPLOAD_BYTES 一致（默认 96MB）
+    client_max_body_size 100m;
+
+    location / {
+        proxy_pass http://deepsleep_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;     # 后端据此判断 HTTPS（Cookie Secure）
+
+        # ---- 流式回答（SSE）必需：不缓冲、不缓存、长超时 ----
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_request_buffering off;    # 大文件上传时边收边转发，避免先落盘再转
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        chunked_transfer_encoding on;
+
+        # 上传大文件时保持连接
+        client_body_timeout 3600s;
+    }
+}
