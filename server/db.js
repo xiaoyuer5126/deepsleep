@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { DEFAULT_PRICING, summarizeSessionUsage } from './pricing.js'
 
 /**
  * SQLite（Node 内置 node:sqlite）数据层。
@@ -38,7 +39,9 @@ CREATE TABLE IF NOT EXISTS conversations (
   title TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  data TEXT NOT NULL
+  data TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  usage TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations (user_id, updated_at DESC);
 
@@ -126,20 +129,36 @@ const referencedFileIds = (session) => {
   return ids
 }
 
-export const openDatabase = (dataDir, { sessionDays = 30 } = {}) => {
+export const openDatabase = (dataDir, { sessionDays = 30, pricing = DEFAULT_PRICING } = {}) => {
   fs.mkdirSync(dataDir, { recursive: true })
   const db = new DatabaseSync(path.join(dataDir, 'app.db'))
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA foreign_keys = ON')
   db.exec('PRAGMA busy_timeout = 5000')
   db.exec(SCHEMA)
-  return new Store(db, sessionDays)
+  // 旧版本升级：补齐新增列（会话置顶、会话用量汇总）
+  ensureColumn(db, 'conversations', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(db, 'conversations', 'usage', 'TEXT')
+  return new Store(db, { sessionDays, pricing })
+}
+
+const ensureColumn = (db, table, column, definition) => {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (!columns.some((item) => item.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
 }
 
 export class Store {
-  constructor(db, sessionDays = 30) {
+  constructor(db, { sessionDays = 30, pricing = DEFAULT_PRICING } = {}) {
     this.db = db
     this.sessionDays = sessionDays
+    this.pricing = pricing
+  }
+
+  /** 用量按「高峰 / 空闲」分桶汇总，前端用当前单价换算成金额 */
+  usageOf(messages) {
+    return summarizeSessionUsage(messages, this.pricing.peakWindows)
   }
 
   transaction(run) {
@@ -240,12 +259,36 @@ export class Store {
 
   /** 会话 */
 
+  /** 列表：置顶优先，其次按更新时间倒序；附带用量汇总供侧边栏显示费用 */
   listSessions(userId) {
     return this.db
       .prepare(
-        'SELECT id, title, created_at AS createdAt, updated_at AS updatedAt FROM conversations WHERE user_id = ? ORDER BY updated_at DESC'
+        `SELECT id, title, created_at AS createdAt, updated_at AS updatedAt, pinned, usage
+         FROM conversations
+         WHERE user_id = ?
+         ORDER BY pinned DESC, updated_at DESC`
       )
       .all(userId)
+      .map((row) => this.toSummary(row))
+  }
+
+  toSummary(row) {
+    let usage = null
+    if (row.usage) {
+      try {
+        usage = JSON.parse(row.usage)
+      } catch {
+        usage = null
+      }
+    }
+    return {
+      id: row.id,
+      title: row.title,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      pinned: Boolean(row.pinned),
+      usage,
+    }
   }
 
   getSession(userId, id) {
@@ -257,19 +300,21 @@ export class Store {
 
   saveSession(userId, session) {
     const data = JSON.stringify(session)
+    const usage = JSON.stringify(this.usageOf(session.messages))
     this.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO conversations (id, user_id, title, created_at, updated_at, data)
-           VALUES (?, ?, ?, ?, ?, ?)
+          `INSERT INTO conversations (id, user_id, title, created_at, updated_at, data, usage)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (id) DO UPDATE SET
              title = excluded.title,
              created_at = excluded.created_at,
              updated_at = excluded.updated_at,
-             data = excluded.data
+             data = excluded.data,
+             usage = excluded.usage
            WHERE conversations.user_id = excluded.user_id`
         )
-        .run(session.id, userId, session.title, session.createdAt, session.updatedAt, data)
+        .run(session.id, userId, session.title, session.createdAt, session.updatedAt, data, usage)
       this.replaceSessionReferences(userId, session)
     })
     this.gcFiles(userId)
@@ -314,6 +359,16 @@ export class Store {
           .run(clean, userId, id)
       }
     })
+  }
+
+  /** 置顶 / 取消置顶 */
+  setPinned(userId, id, pinned) {
+    const result = this.db
+      .prepare('UPDATE conversations SET pinned = ? WHERE user_id = ? AND id = ?')
+      .run(pinned ? 1 : 0, userId, id)
+    if (result.changes === 0) {
+      throw fail('会话不存在', 404)
+    }
   }
 
   deleteSession(userId, id) {
@@ -424,55 +479,63 @@ export class Store {
     })
   }
 
-  /** 用暂存替换该用户的全部会话与原件；返回新列表摘要。 */
-  commitStaging(userId) {
-    const summaries = this.transaction(() => {
+  /**
+   * 提交暂存区。
+   * - mode = 'replace'：用暂存内容替换该账号的全部会话与原件（默认，原子操作）
+   * - mode = 'append'：保留现有会话，把暂存内容追加进来；id 冲突时生成新 id，不覆盖已有对话
+   * 返回提交后的完整会话列表（含置顶、用量）。
+   */
+  commitStaging(userId, mode = 'replace') {
+    this.transaction(() => {
       const staged = this.db
         .prepare('SELECT id, data FROM staging_sessions WHERE user_id = ?')
         .all(userId)
       const parsed = staged.map((row) => sanitizeSession(JSON.parse(row.data)))
-      this.db.prepare('DELETE FROM conversations WHERE user_id = ?').run(userId)
-      this.db.prepare('DELETE FROM conversation_files WHERE user_id = ?').run(userId)
-      this.db.prepare('DELETE FROM files WHERE user_id = ?').run(userId)
-      const insertSession = this.db.prepare(
-        `INSERT INTO conversations (id, user_id, title, created_at, updated_at, data)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (id) DO UPDATE SET
-           title = excluded.title,
-           created_at = excluded.created_at,
-           updated_at = excluded.updated_at,
-           data = excluded.data`
-      )
-      for (const session of parsed) {
-        insertSession.run(
-          session.id,
-          userId,
-          session.title,
-          session.createdAt,
-          session.updatedAt,
-          JSON.stringify(session)
-        )
-        this.replaceSessionReferences(userId, session)
+
+      if (mode === 'replace') {
+        this.db.prepare('DELETE FROM conversations WHERE user_id = ?').run(userId)
+        this.db.prepare('DELETE FROM conversation_files WHERE user_id = ?').run(userId)
+        this.db.prepare('DELETE FROM files WHERE user_id = ?').run(userId)
       }
+
+      const insertSession = this.db.prepare(
+        `INSERT INTO conversations (id, user_id, title, created_at, updated_at, data, usage)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      const exists = this.db.prepare(
+        'SELECT 1 AS found FROM conversations WHERE user_id = ? AND id = ?'
+      )
+      // 追加模式：同一份归档重复导入时，换新 id 而不是覆盖或报错
+      for (const session of parsed) {
+        let stored = session
+        if (mode === 'append' && exists.get(userId, session.id)) {
+          stored = { ...session, id: crypto.randomUUID() }
+        }
+        insertSession.run(
+          stored.id,
+          userId,
+          stored.title,
+          stored.createdAt,
+          stored.updatedAt,
+          JSON.stringify(stored),
+          JSON.stringify(this.usageOf(stored.messages))
+        )
+        this.replaceSessionReferences(userId, stored)
+      }
+
+      // 附件原件：替换模式直接搬入；追加模式保留已有原件（同 id 内容相同，忽略冲突）
+      const fileOp = mode === 'replace' ? 'INSERT INTO' : 'INSERT OR IGNORE INTO'
       this.db
         .prepare(
-          `INSERT INTO files (user_id, id, mime, size, created_at, data)
+          `${fileOp} files (user_id, id, mime, size, created_at, data)
            SELECT user_id, id, mime, size, created_at, data FROM staging_files WHERE user_id = ?`
         )
         .run(userId)
       this.db.prepare('DELETE FROM staging_sessions WHERE user_id = ?').run(userId)
       this.db.prepare('DELETE FROM staging_files WHERE user_id = ?').run(userId)
-      return parsed
-        .map((session) => ({
-          id: session.id,
-          title: session.title,
-          createdAt: session.createdAt,
-          updatedAt: session.updatedAt,
-        }))
-        .sort((a, b) => b.updatedAt - a.updatedAt)
     })
     this.gcFiles(userId)
-    return summaries
+    return this.listSessions(userId)
   }
 
   /** 测试与运维用：彻底删除用户及其数据。 */

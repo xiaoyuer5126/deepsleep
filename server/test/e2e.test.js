@@ -110,6 +110,13 @@ const sampleSession = (id, title = '示例会话') => ({
       prefix: true,
       status: 'done',
       blocks: [{ type: 'text', text: '你好！' }],
+      usage: {
+        input_tokens: 100,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 50,
+        output_tokens: 20,
+        server_tool_use: { web_search_requests: 2, tool_search: 1, tool_fetch: 0, tool_image_search: 0 },
+      },
     },
   ],
 })
@@ -211,6 +218,12 @@ test('会话增删改查与跨账号隔离', async () => {
   assert.equal(list.status, 200)
   assert.equal(list.json.sessions.length, 1)
   assert.equal(list.json.sessions[0].title, '示例会话')
+  // 侧边栏费用所需的用量汇总：按计费口径统计（web_search_requests 不算计费次数）
+  assert.equal(list.json.sessions[0].usage.offPeak.inputMiss, 100)
+  assert.equal(list.json.sessions[0].usage.offPeak.cacheHit, 50)
+  assert.equal(list.json.sessions[0].usage.offPeak.output, 20)
+  assert.equal(list.json.sessions[0].usage.offPeak.searches, 1)
+  assert.equal(list.json.sessions[0].pinned, false)
 
   const detail = await alice.call('GET', '/api/sessions/sess-1')
   assert.equal(detail.status, 200)
@@ -423,6 +436,95 @@ test('代理：服务器默认 Key 可在账号未绑定时使用', async () => 
   assert.equal(request.headers.authorization, 'Bearer sk-server-default')
   const account = await client.call('GET', '/api/account')
   assert.equal(account.json.account.usingServerApiKey, true)
+})
+
+test('置顶：置顶会话排在最前，可取消', async () => {
+  const { base } = await startApp()
+  const client = makeClient(base)
+  await register(client)
+
+  await client.call('PUT', '/api/sessions/sess-old', {
+    body: { session: { ...sampleSession('sess-old', '旧会话'), updatedAt: 1700000001000 } },
+  })
+  await client.call('PUT', '/api/sessions/sess-new', {
+    body: { session: { ...sampleSession('sess-new', '新会话'), updatedAt: 1700000009000 } },
+  })
+
+  let list = await client.call('GET', '/api/sessions')
+  assert.deepEqual(
+    list.json.sessions.map((item) => item.id),
+    ['sess-new', 'sess-old']
+  )
+
+  const pinned = await client.call('PATCH', '/api/sessions/sess-old', { body: { pinned: true } })
+  assert.equal(pinned.status, 200)
+  list = await client.call('GET', '/api/sessions')
+  assert.deepEqual(
+    list.json.sessions.map((item) => item.id),
+    ['sess-old', 'sess-new']
+  )
+  assert.equal(list.json.sessions[0].pinned, true)
+
+  // 重命名不影响置顶
+  await client.call('PATCH', '/api/sessions/sess-old', { body: { title: '改个名' } })
+  list = await client.call('GET', '/api/sessions')
+  assert.equal(list.json.sessions[0].pinned, true)
+  assert.equal(list.json.sessions[0].title, '改个名')
+
+  await client.call('PATCH', '/api/sessions/sess-old', { body: { pinned: false } })
+  list = await client.call('GET', '/api/sessions')
+  assert.deepEqual(
+    list.json.sessions.map((item) => item.id),
+    ['sess-new', 'sess-old']
+  )
+})
+
+test('历史导入：追加模式保留现有对话，id 冲突自动换新', async () => {
+  const { base } = await startApp()
+  const client = makeClient(base)
+  await register(client)
+
+  // 现有两条对话
+  await client.call('PUT', '/api/sessions/sess-keep', {
+    body: { session: sampleSession('sess-keep', '已有对话') },
+  })
+  await client.call('PUT', '/api/sessions/sess-dup', {
+    body: { session: sampleSession('sess-dup', '会被重复导入的对话') },
+  })
+
+  // 暂存一条 id 冲突 + 一条全新
+  await client.call('POST', '/api/import/reset')
+  await client.call('PUT', '/api/import/sessions/sess-dup', {
+    body: { session: sampleSession('sess-dup', '导入的同名对话') },
+  })
+  await client.call('PUT', '/api/import/sessions/sess-fresh', {
+    body: { session: sampleSession('sess-fresh', '新导入对话') },
+  })
+
+  const appended = await client.call('POST', '/api/import/commit', { body: { mode: 'append' } })
+  assert.equal(appended.status, 200)
+  assert.equal(appended.json.mode, 'append')
+  const list = await client.call('GET', '/api/sessions')
+  assert.equal(list.json.sessions.length, 4, '原有 2 条 + 追加 2 条')
+  const titles = list.json.sessions.map((item) => item.title)
+  assert.ok(titles.includes('已有对话'))
+  assert.ok(titles.includes('会被重复导入的对话'))
+  assert.ok(titles.includes('导入的同名对话'))
+  assert.ok(titles.includes('新导入对话'))
+  // 原会话内容没有被替换
+  assert.equal((await client.call('GET', '/api/sessions/sess-dup')).json.session.title, '会被重复导入的对话')
+  // 追加的会话带用量汇总
+  const imported = list.json.sessions.find((item) => item.id === 'sess-fresh')
+  assert.equal(imported.usage.offPeak.searches, 1)
+
+  // 替换模式仍然可用
+  await client.call('POST', '/api/import/reset')
+  await client.call('PUT', '/api/import/sessions/only-one', {
+    body: { session: sampleSession('only-one', '唯一对话') },
+  })
+  const replaced = await client.call('POST', '/api/import/commit', { body: { mode: 'replace' } })
+  assert.equal(replaced.json.sessions.length, 1)
+  assert.equal(replaced.json.sessions[0].id, 'only-one')
 })
 
 test('跨站写请求被拒绝', async () => {

@@ -1,16 +1,19 @@
-import type { MessageUsage } from './api/types.js'
+import type { ChatModel, MessageUsage } from './api/types.js'
 import { useAuth } from './auth.js'
-import type { ChatModel } from './api/types.js'
 
-/** 服务端下发的单价配置（元 / 百万 token），默认值与 DeepSeek 官方价格页一致。 */
+/**
+ * 服务端下发的单价配置（元 / 百万 token），默认值与 DeepSeek 官方价格页一致。
+ * 计费口径见官方文档《使用 Anthropic API》与《联网工具 · 用量与计费》：
+ * - input_tokens 是未命中缓存的输入，cache_read_input_tokens 是命中缓存的输入
+ * - 联网按 tool_search（文字）+ tool_image_search（图片）+ tool_fetch（抓取）计费，
+ *   web_search_requests / web_fetch_requests 只是展示用的块数量，不计费
+ * - 高峰时段（北京时间周一至周五 9:00-12:00、14:00-18:00，不含法定节假日）价格翻倍
+ */
 export type PricingConfig = {
   currency: string
   models: Record<string, { inputCacheHit: number; inputCacheMiss: number; output: number }>
-  /** 高峰时段单价倍数（默认 2 倍） */
   peakMultiplier: number
-  /** 高峰小时区间（北京时间），如 [[9,12],[14,18]] */
   peakWindows: [number, number][]
-  /** 联网搜索 / 网页抓取每次价格 */
   webRequestPrice: number
 }
 
@@ -28,10 +31,9 @@ const FALLBACK: PricingConfig = {
   webRequestPrice: 0.005,
 }
 
-export const getPricing = (): PricingConfig =>
-  useAuth.getState().config?.pricing ?? FALLBACK
+export const getPricing = (): PricingConfig => useAuth.getState().config?.pricing ?? FALLBACK
 
-/** 北京时间周一至周五 9:00-12:00、14:00-18:00 为高峰时段（不含法定节假日，近似判断）。 */
+/** 北京时间周一至周五的高峰时段判断（法定节假日无法在本地判断，属于近似） */
 export const isPeakTime = (timestamp: number, windows: [number, number][]): boolean => {
   const beijing = new Date(timestamp + 8 * 60 * 60 * 1000)
   const day = beijing.getUTCDay()
@@ -41,6 +43,17 @@ export const isPeakTime = (timestamp: number, windows: [number, number][]): bool
   const hour = beijing.getUTCHours()
   return windows.some(([start, end]) => hour >= start && hour < end)
 }
+
+/** 一段用量：token 分输入未命中 / 缓存命中 / 输出，searches 为计费的联网次数 */
+export type UsageBucket = {
+  inputMiss: number
+  cacheHit: number
+  output: number
+  searches: number
+}
+
+/** 会话用量按高峰 / 空闲分桶（服务端汇总后下发，侧边栏据此显示每条对话的费用） */
+export type SessionUsage = { peak: UsageBucket; offPeak: UsageBucket }
 
 export type CostBreakdown = {
   total: number
@@ -52,7 +65,32 @@ export type CostBreakdown = {
 
 const ZERO: CostBreakdown = { total: 0, inputMiss: 0, cacheHit: 0, output: 0, searches: 0 }
 
-/** 按 usage 估算一次回答的费用；模型未知时按 deepseek-flash 计。 */
+/** 单条消息的计费用量（按同样口径把 usage 归一化） */
+const bucketFromMessage = (usage: MessageUsage): UsageBucket => {
+  const tools = usage.server_tool_use ?? {}
+  return {
+    inputMiss: (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
+    cacheHit: usage.cache_read_input_tokens ?? 0,
+    output: usage.output_tokens ?? 0,
+    searches:
+      (tools.tool_search ?? 0) + (tools.tool_image_search ?? 0) + (tools.tool_fetch ?? 0),
+  }
+}
+
+const bucketPrice = (
+  bucket: UsageBucket,
+  modelPricing: { inputCacheHit: number; inputCacheMiss: number; output: number },
+  multiplier: number,
+  webRequestPrice: number
+): number =>
+  (bucket.inputMiss * modelPricing.inputCacheMiss +
+    bucket.cacheHit * modelPricing.inputCacheHit +
+    bucket.output * modelPricing.output) /
+    1_000_000 *
+    multiplier +
+  bucket.searches * webRequestPrice
+
+/** 按 usage 估算一条回答的费用；模型未知时按 deepseek-flash 计。 */
 export const estimateCost = (
   usage: MessageUsage | undefined,
   model: ChatModel | null,
@@ -66,20 +104,37 @@ export const estimateCost = (
   if (!modelPricing) {
     return ZERO
   }
+  const bucket = bucketFromMessage(usage)
   const multiplier = isPeakTime(at, pricing.peakWindows) ? pricing.peakMultiplier : 1
-  // input_tokens 不含缓存读写，缓存写入按未命中价计（与官方计费口径一致）
-  const inputMiss = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0)
-  const cacheHit = usage.cache_read_input_tokens ?? 0
-  const output = usage.output_tokens ?? 0
-  const searches =
-    (usage.server_tool_use?.web_search_requests ?? 0) + (usage.server_tool_use?.tool_search ?? 0)
-  const tokenPrice =
-    (inputMiss * modelPricing.inputCacheMiss +
-      cacheHit * modelPricing.inputCacheHit +
-      output * modelPricing.output) /
-    1_000_000
-  const total = tokenPrice * multiplier + searches * pricing.webRequestPrice
-  return { total, inputMiss, cacheHit, output, searches }
+  return {
+    total: bucketPrice(bucket, modelPricing, multiplier, pricing.webRequestPrice),
+    ...bucket,
+  }
+}
+
+/** 估算整条会话的费用（侧边栏用）；会话用量不区分模型，统一按 deepseek-flash 单价。 */
+export const estimateSessionCost = (usage: SessionUsage | undefined | null): number => {
+  if (!usage) {
+    return 0
+  }
+  const pricing = getPricing()
+  const modelPricing = pricing.models['deepseek-flash']
+  if (!modelPricing) {
+    return 0
+  }
+  const offPeak = bucketPrice(
+    usage.offPeak ?? { inputMiss: 0, cacheHit: 0, output: 0, searches: 0 },
+    modelPricing,
+    1,
+    pricing.webRequestPrice
+  )
+  const peak = bucketPrice(
+    usage.peak ?? { inputMiss: 0, cacheHit: 0, output: 0, searches: 0 },
+    modelPricing,
+    pricing.peakMultiplier,
+    pricing.webRequestPrice
+  )
+  return offPeak + peak
 }
 
 /** 金额展示：小额保留 4 位小数，大额保留 2 位。 */

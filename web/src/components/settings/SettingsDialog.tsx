@@ -32,6 +32,7 @@ import { Modal } from '../base/Modal.js'
 import { Select } from '../base/Select.js'
 import { showToast } from '../base/toastState.js'
 import { AccountSettings } from './AccountSettings.js'
+import importStyles from './ImportMode.module.css'
 import { closeSettings, useSettingsDialog, type SettingsSection } from './settingsDialogState.js'
 import styles from './Settings.module.css'
 
@@ -349,6 +350,7 @@ const ImportConfirm = ({
       }
     >
       <div className={styles.importConfirmText}>{t('historyImportConfirmDescription')}</div>
+      <ImportModeChooser historyImport={historyImport} />
     </Modal>
   )
 }
@@ -447,9 +449,13 @@ const SettingCell = ({
   )
 }
 
-/** 选文件后先提示覆盖；确认后才检查文件并执行导入，任何错误都提示导入失败。 */
+/** 导入方式：追加到现有对话 / 覆盖全部对话 */
+type ImportMode = 'append' | 'replace'
+
+/** 选文件后先确认导入方式；确认后才检查文件并执行导入，任何错误都提示导入失败。 */
 const useHistoryImport = () => {
   const [file, setFile] = useState<File | null>(null)
+  const [mode, setMode] = useState<ImportMode>('append')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<Status>(null)
   const importing = useRef(false)
@@ -463,7 +469,7 @@ const useHistoryImport = () => {
     setBusy(true)
     setStatus(null)
     try {
-      const count = await importHistory(file)
+      const count = await importHistory(file, mode)
       setStatus({ key: count === 1 ? 'historyImportedOne' : 'historyImported', params: { count } })
     } catch {
       setStatus({ key: 'historyImportFailed', error: true })
@@ -473,7 +479,53 @@ const useHistoryImport = () => {
     }
   }
 
-  return { file, busy, status, select: setFile, cancel: () => setFile(null), confirm }
+  return {
+    file,
+    mode,
+    setMode,
+    busy,
+    status,
+    select: setFile,
+    cancel: () => setFile(null),
+    confirm,
+  }
+}
+
+/** 导入方式选择：默认追加，重复导入也不会覆盖已有对话。 */
+const ImportModeChooser = ({ historyImport }: { historyImport: ReturnType<typeof useHistoryImport> }) => {
+  const t = useTranslate()
+  const options: { value: ImportMode; label: TranslationKey; description: TranslationKey }[] = [
+    {
+      value: 'append',
+      label: 'historyImportModeAppend',
+      description: 'historyImportModeAppendDescription',
+    },
+    {
+      value: 'replace',
+      label: 'historyImportModeReplace',
+      description: 'historyImportModeReplaceDescription',
+    },
+  ]
+  return (
+    <div role="radiogroup" aria-label={t('historyImportModeLabel')} className={importStyles.options}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={historyImport.mode === option.value}
+          className={clsx(
+            importStyles.option,
+            historyImport.mode === option.value && importStyles.optionSelected
+          )}
+          onClick={() => historyImport.setMode(option.value)}
+        >
+          <span className={importStyles.optionTitle}>{t(option.label)}</span>
+          <span className={importStyles.optionDescription}>{t(option.description)}</span>
+        </button>
+      ))}
+    </div>
+  )
 }
 
 /** 导入 = 覆盖：用选中文件替换本地全部会话与附件。 */

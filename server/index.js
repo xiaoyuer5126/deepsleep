@@ -73,7 +73,10 @@ export const createApp = ({ config, store }) => {
 
 export const startServer = async (overrides = {}) => {
   const config = loadConfig(overrides)
-  const store = openDatabase(config.dataDir, { sessionDays: config.sessionDays })
+  const store = openDatabase(config.dataDir, {
+    sessionDays: config.sessionDays,
+    pricing: config.pricing,
+  })
   const app = createApp({ config, store })
   const server = http.createServer(app)
   server.keepAliveTimeout = 65_000

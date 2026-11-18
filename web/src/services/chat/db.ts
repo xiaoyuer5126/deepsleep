@@ -57,20 +57,32 @@ export const saveFiles = async (files: StoredFile[]): Promise<void> => {
   await Promise.all(workers)
 }
 
-export const saveSession = async (session: Session, files: StoredFile[] = []): Promise<void> => {
+export const saveSession = async (
+  session: Session,
+  files: StoredFile[] = []
+): Promise<SessionSummary | undefined> => {
   if (files.length > 0) {
     await saveFiles(files)
   }
-  await requestBackend(`/api/sessions/${encodeURIComponent(session.id)}`, {
-    method: 'PUT',
-    json: { session },
-  })
+  const data = await requestJson<{ session: SessionSummary }>(
+    `/api/sessions/${encodeURIComponent(session.id)}`,
+    { method: 'PUT', json: { session } }
+  )
+  return data.session
 }
 
 export const renameSession = async (id: string, title: string): Promise<void> => {
   await requestBackend(`/api/sessions/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     json: { title },
+  })
+}
+
+/** 置顶 / 取消置顶 */
+export const setPinned = async (id: string, pinned: boolean): Promise<void> => {
+  await requestBackend(`/api/sessions/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    json: { pinned },
   })
 }
 
@@ -137,9 +149,12 @@ export const updateStagingFileTypes = async (
   })
 }
 
-export const commitStaging = async (): Promise<SessionSummary[]> => {
+export const commitStaging = async (
+  mode: 'replace' | 'append' = 'replace'
+): Promise<SessionSummary[]> => {
   const data = await requestJson<{ sessions: SessionSummary[] }>('/api/import/commit', {
     method: 'POST',
+    json: { mode },
   })
   return data.sessions
 }

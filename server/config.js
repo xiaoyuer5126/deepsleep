@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { DEFAULT_PRICING } from './pricing.js'
 
 /** 读取布尔型环境变量，接受 1/true/yes/on。 */
 const bool = (value, fallback = false) => {
@@ -13,24 +14,6 @@ const bool = (value, fallback = false) => {
 const int = (value, fallback) => {
   const parsed = Number.parseInt(String(value ?? ''), 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-/** 费用估算单价（人民币元 / 百万 token），默认值取自 DeepSeek 官方价格页（2026-11）。 */
-const DEFAULT_PRICING = {
-  currency: 'CNY',
-  unit: 'per_million_tokens',
-  models: {
-    'deepseek-flash': { inputCacheHit: 0.02, inputCacheMiss: 1, output: 4 },
-    'deepseek-v4-pro': { inputCacheHit: 0.15, inputCacheMiss: 4.5, output: 13.5 },
-  },
-  /** 高峰时段单价翻倍：北京时间周一至周五（不含法定节假日）9:00-12:00、14:00-18:00 */
-  peakMultiplier: 2,
-  peakWindows: [
-    [9, 12],
-    [14, 18],
-  ],
-  /** 联网搜索 / 网页抓取：每次 0.005 元 */
-  webRequestPrice: 0.005,
 }
 
 const parsePricing = () => {

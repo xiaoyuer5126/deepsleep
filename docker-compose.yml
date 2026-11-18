@@ -42,3 +42,18 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # Cloudflare Tunnel：把本服务暴露到公网（HTTPS），无需公网 IP / 端口映射。
+  # 默认不启动，启用方式见 README「通过 Cloudflare Tunnel 暴露到公网」：
+  #   docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: deepseek-web-tunnel
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    depends_on:
+      - deepseek-web
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    # 使用 token 方式时 Cloudflare 后台的 Public Hostname 指向：http://deepseek-web:3080
+    # 临时试用（随机 trycloudflare 域名，无需账号）：见 README 里的 quick tunnel 命令
+

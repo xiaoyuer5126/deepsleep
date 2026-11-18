@@ -57,6 +57,9 @@ export const AuthScreen = () => {
   return (
     <div className={styles.page}>
       <div className={styles.glows} aria-hidden="true" />
+      <div className={styles.logoWrap}>
+        <img className={styles.logo} src="assets/favicon.svg" alt="" width={48} height={48} />
+      </div>
       <div className={styles.brand}>{t('appName')}</div>
       <form className={styles.card} onSubmit={(event) => void submit(event)}>
         <h1 className={styles.title}>{t(registering ? 'authRegisterTitle' : 'authLoginTitle')}</h1>

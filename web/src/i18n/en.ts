@@ -14,16 +14,21 @@ export const en = {
     'Chats or attachments have not been saved to the server. Retry before closing this page.',
   sessionDeleteFailed: 'Unable to delete this chat. Please try again.',
   settings: 'Settings',
-  appName: 'DeepSeek',
+  appName: 'Private DeepSeek',
   deleteSessionModalContentTitle: 'Delete chat?',
   deleteSessionWithFilesDescription:
     'This chat and its uploaded files will be permanently deleted and cannot be recovered. Delete this chat?',
   cancel: 'Cancel',
   delete: 'Delete',
   sessionItemMenuRenameOption: 'Rename',
+  sessionItemMenuPinOption: 'Pin',
+  sessionItemMenuUnpinOption: 'Unpin',
+  sessionItemMenuExportOption: 'Export as ZIP',
+  sessionExportFailed: 'Export failed. Please try again.',
   more: 'More',
   close: 'Close',
   sessionHistoryTimelineLabelToday: 'Today',
+  sessionHistoryTimelineLabelPinned: 'Pinned',
   sessionHistoryTimelineLabelYesterday: 'Yesterday',
   sessionHistoryTimelineLabel7days: '7 Days',
   sessionHistoryTimelineLabel30days: '30 Days',
@@ -113,10 +118,16 @@ export const en = {
   historyImport: 'Import chat history',
   historyImportConfirm: 'Import',
   historyImportConfirmTitle: 'Import chat history?',
-  historyImportConfirmDescription:
-    'The uploaded chat history will replace all your current chats. Import anyway?',
+  historyImportConfirmDescription: 'Choose how to import, then confirm.',
   historyImportDescription:
-    'Importing chat history replaces all chats and attachments of this account. Supports ZIP files exported from DeepSeek.',
+    'Supports ZIP files exported from DeepSeek. Append to existing chats, or replace them entirely.',
+  historyImportModeLabel: 'Import mode',
+  historyImportModeAppend: 'Append to existing chats (recommended)',
+  historyImportModeAppendDescription:
+    'Keeps your current chats and adds the imported ones. Importing the same file again will not overwrite anything.',
+  historyImportModeReplace: 'Replace existing chats',
+  historyImportModeReplaceDescription:
+    'Clears every chat of this account and replaces them with the imported content (cannot be undone).',
   historyImportedOne: 'Imported 1 chat',
   historyImported: 'Imported {count} chats',
   historyImportFailed:

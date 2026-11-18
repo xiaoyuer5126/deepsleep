@@ -22,8 +22,22 @@
     radial-gradient(520px 260px at 85% 110%, var(--dsw-alias-bg-skeleton), transparent 70%);
 }
 
+.logoWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logo {
+  display: block;
+  width: 48px;
+  height: 48px;
+}
+
 .brand {
   position: relative;
+  margin-top: -6px;
   font-size: 30px;
   font-weight: 600;
   letter-spacing: -0.02em;

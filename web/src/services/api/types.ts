@@ -194,8 +194,19 @@ export type MessageUsage = {
   cache_read_input_tokens: number
   /** message_start 中为 0，message_delta 中为全轮累计值 */
   output_tokens: number
-  /** 仅当 message_delta 中有对外输出的搜索结果块时出现 */
-  server_tool_use?: { web_search_requests: number; tool_search: number }
+  /** 联网工具计数（message_delta 累计）。计费看 tool_search / tool_image_search / tool_fetch */
+  server_tool_use?: {
+    /** 展示用：搜索结果块数量，不是计费次数 */
+    web_search_requests?: number
+    /** 展示用：抓取结果块数量，不是计费次数 */
+    web_fetch_requests?: number
+    /** 计费：文字搜索次数 */
+    tool_search?: number
+    /** 计费：网页抓取次数 */
+    tool_fetch?: number
+    /** 计费：图片搜索次数 */
+    tool_image_search?: number
+  }
 }
 
 /** content_block_start 携带的初始内容块；工具块已是完整内容 */

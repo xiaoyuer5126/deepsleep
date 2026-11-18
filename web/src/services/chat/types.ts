@@ -1,5 +1,6 @@
 import type { TranslationMessage } from '../../i18n/index.js'
 import type { ApiErrorKind } from '../api/client.js'
+import type { SessionUsage } from '../pricing.js'
 import type {
   ChatModel,
   MessageUsage,
@@ -116,8 +117,13 @@ export type Session = {
   rootMessageId?: string | null
 }
 
-/** 会话列表元数据；消息只在打开会话时加载。 */
-export type SessionSummary = Pick<Session, 'id' | 'title' | 'createdAt' | 'updatedAt'>
+/** 会话列表元数据；消息只在打开会话时加载。pinned / usage 由服务端返回。 */
+export type SessionSummary = Pick<Session, 'id' | 'title' | 'createdAt' | 'updatedAt'> & {
+  /** 是否置顶（置顶的会话排在侧边栏最前） */
+  pinned?: boolean
+  /** 会话累计用量（按高峰 / 空闲分桶），用于显示这条对话花了多少钱 */
+  usage?: SessionUsage | null
+}
 
 /** 显式提取字段，避免将完整会话的消息带进列表。 */
 export const toSessionSummary = (session: SessionSummary): SessionSummary => ({

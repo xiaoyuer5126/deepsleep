@@ -87,8 +87,11 @@ export const useChatStore = create<ChatState>(() => ({
 
 const { getState: get, setState: set } = useChatStore
 
+/** 置顶的会话排在最前，其余按更新时间倒序（与服务端一致） */
 const sortSessions = (sessions: SessionSummary[]) =>
-  [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)
+  [...sessions].sort(
+    (a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false) || b.updatedAt - a.updatedAt
+  )
 
 const getSession = (id: string) => {
   const cache = get().sessionCache
@@ -188,9 +191,17 @@ const persist = (sessionId: string) => {
     const files = pendingFiles.get(sessionId)
     void db
       .saveSession(session, files)
-      .then(() => {
+      .then((summary) => {
         if (epoch !== historyEpoch || !getSession(sessionId)) {
           return
+        }
+        // 服务端返回最新用量汇总，侧边栏的费用随之更新
+        if (summary) {
+          set((state) => ({
+            sessions: state.sessions.map((item) =>
+              item.id === sessionId ? { ...item, usage: summary.usage ?? item.usage } : item
+            ),
+          }))
         }
         if (pendingFiles.get(sessionId) === files) {
           pendingFiles.delete(sessionId)
@@ -473,6 +484,41 @@ export const renameSession = (id: string, title: string) => {
     }))
     void db.renameSession(id, title).catch(db.reportStorageError('rename session'))
   }
+}
+
+/** 置顶 / 取消置顶：先更新界面再写服务端，失败时保留本地效果（下次刷新会回到服务端状态） */
+export const pinSession = (id: string, pinned: boolean) => {
+  if (get().importingHistory || deletingSessions.has(id)) {
+    return
+  }
+  const target = get().sessions.find((session) => session.id === id)
+  if (!target || Boolean(target.pinned) === pinned) {
+    return
+  }
+  set((state) => ({
+    sessions: sortSessions(
+      state.sessions.map((session) => (session.id === id ? { ...session, pinned } : session))
+    ),
+  }))
+  void db.setPinned(id, pinned).catch(db.reportStorageError('pin session'))
+}
+
+/**
+ * 用服务端返回的列表刷新侧边栏（历史导入追加、外部变更后调用）。
+ * 保留已加载的会话详情缓存，只丢弃已被删除的条目。
+ */
+export const applyRemoteSummaries = (summaries: SessionSummary[]) => {
+  const ids = new Set(summaries.map((session) => session.id))
+  set((state) => ({
+    ready: true,
+    initError: false,
+    sessions: sortSessions(summaries),
+    sessionCache: Object.fromEntries(
+      Object.entries(state.sessionCache).filter(([id]) => ids.has(id))
+    ),
+    sessionLoadErrors: {},
+  }))
+  trimSessionCache()
 }
 
 /**

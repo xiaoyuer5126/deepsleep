@@ -22,7 +22,7 @@ WORKDIR /e2e
 COPY package.json ./
 RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
     npm install --no-audit --no-fund --registry=${NPM_REGISTRY}
-COPY smoke.mjs ./
+COPY smoke.mjs render-icon.mjs ./
 
 ENV TARGET_URL=http://deepseek-web-test:3080 \
     SHOTS_DIR=/shots

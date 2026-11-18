@@ -40,13 +40,18 @@ export const createSessionRouter = ({ store, config }) => {
     const id = assertFileId(req.params.id)
     const session = sanitizeSession(req.body?.session, id)
     store.saveSession(req.user.id, session)
-    res.json({ session: summaryOf(session) })
+    res.json({ session: { ...summaryOf(session), usage: store.usageOf(session.messages) } })
   })
 
+  /** 重命名 / 置顶；两个字段都可以单独提交 */
   router.patch('/:id', requireAuth, (req, res) => {
     const id = assertFileId(req.params.id)
-    const title = String(req.body?.title ?? '')
-    store.renameSession(req.user.id, id, title)
+    if (typeof req.body?.title === 'string') {
+      store.renameSession(req.user.id, id, req.body.title)
+    }
+    if (typeof req.body?.pinned === 'boolean') {
+      store.setPinned(req.user.id, id, req.body.pinned)
+    }
     res.json({ ok: true })
   })
 
@@ -154,9 +159,11 @@ export const createImportRouter = ({ store, config }) => {
     res.json({ ok: true })
   })
 
-  router.post('/commit', requireAuth, (req, res) => {
-    const summaries = store.commitStaging(req.user.id)
-    res.json({ sessions: summaries })
+  router.post('/commit', requireAuth, jsonBody, (req, res) => {
+    // mode=append：追加到现有对话（重复 id 自动换新 id）；默认 replace：整库替换
+    const mode = req.body?.mode === 'append' ? 'append' : 'replace'
+    const sessions = store.commitStaging(req.user.id, mode)
+    res.json({ sessions, mode })
   })
 
   return router
