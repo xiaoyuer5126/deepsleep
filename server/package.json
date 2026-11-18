@@ -1,0 +1,17 @@
+{
+  "name": "deepseek-web-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted multi-user backend for the DeepSeek web chat UI clone",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "express": "4.21.2"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/e2e.test.js"
+  }
+}

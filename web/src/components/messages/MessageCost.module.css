@@ -1,0 +1,12 @@
+.cost {
+  display: inline-flex;
+  align-items: center;
+  height: var(--ds-control-height-s);
+  padding: 0 4px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}

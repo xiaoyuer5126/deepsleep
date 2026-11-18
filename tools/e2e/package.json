@@ -1,0 +1,10 @@
+{
+  "name": "deepseek-web-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Headless Chromium smoke test for the self-hosted DeepSeek web app",
+  "dependencies": {
+    "puppeteer-core": "23.11.1"
+  }
+}

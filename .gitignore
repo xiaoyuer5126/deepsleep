@@ -1,0 +1,7 @@
+node_modules/
+web/dist/
+data/
+.env
+_upstream/
+*.log
+server/node_modules/

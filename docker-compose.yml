@@ -1,0 +1,44 @@
+services:
+  deepseek-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 基础镜像与 npm 源；国内默认走 npmmirror，可用 .env 覆盖
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    image: deepseek-web-self:latest
+    container_name: deepseek-web
+    restart: unless-stopped
+    ports:
+      # 宿主机端口:容器端口；如需只允许本机访问改成 "127.0.0.1:3080:3080"
+      - "3080:3080"
+    environment:
+      PORT: "3080"
+      DATA_DIR: "/data"
+      TZ: "Asia/Shanghai"
+      # 用于加密用户绑定的 API Key；不填则首次启动自动生成并保存在 /data/app-secret
+      APP_SECRET: ${APP_SECRET:-}
+      # 服务器默认 API Key：账号没绑定自己的 Key 时使用（适合一个人付费、几个人共用）
+      DEFAULT_DEEPSEEK_API_KEY: ${DEFAULT_DEEPSEEK_API_KEY:-}
+      # 注册控制
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      REGISTER_INVITE_CODE: ${REGISTER_INVITE_CODE:-}
+      # 登录态有效天数
+      SESSION_DAYS: ${SESSION_DAYS:-30}
+      # 通过 HTTPS 反向代理访问时设为 true，Cookie 会带 Secure
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    volumes:
+      # 全部数据（SQLite 数据库、附件原件、自动生成的密钥）都在这里，备份只需拷贝该目录
+      - ./data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

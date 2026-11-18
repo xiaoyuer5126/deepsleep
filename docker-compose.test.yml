@@ -1,0 +1,41 @@
+# 仅用于本地联调 / 自动化测试：用 mock DeepSeek API 代替真实 API，不产生费用。
+# 启动：docker compose -f docker-compose.test.yml up -d --build
+# 访问：http://localhost:3080
+services:
+  mock:
+    image: node:24-bookworm-slim
+    container_name: deepseek-web-mock
+    command: ["node", "/mock/mock-server.mjs"]
+    volumes:
+      - ./server/test:/mock:ro
+    environment:
+      MOCK_PORT: "4010"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    image: deepseek-web-self:latest
+    container_name: deepseek-web-test
+    depends_on:
+      - mock
+    ports:
+      - "3080:3080"
+    environment:
+      PORT: "3080"
+      DATA_DIR: "/data"
+      TZ: "Asia/Shanghai"
+      APP_SECRET: "test-secret-for-local-e2e"
+      DEEPSEEK_API_BASE: "http://mock:4010"
+      DEFAULT_DEEPSEEK_API_KEY: "sk-test-server-default"
+      ALLOW_REGISTRATION: "true"
+      REGISTER_INVITE_CODE: ""
+    volumes:
+      - dsw-test-data:/data
+
+volumes:
+  dsw-test-data:

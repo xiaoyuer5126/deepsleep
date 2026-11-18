@@ -1,0 +1,12 @@
+.git
+.github
+.gitignore
+_upstream
+node_modules
+**/node_modules
+web/dist
+data
+*.log
+.env
+.env.*
+!.env.example
