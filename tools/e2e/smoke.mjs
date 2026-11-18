@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 浏览器端冒烟测试（容器内 headless Chromium）。
  *
  * 构建与运行：
@@ -150,7 +150,9 @@ const captureZip = async (clickTrigger, fileName) => {
 }
 
 const uploadZip = async (fileName) => {
-  const fileInput = await page.$('input[accept*=".zip"]')
+  // 现在侧边栏与设置里都有 ZIP 输入框：设置弹窗挂在 body 末尾，取最后一个即当前可见的那个
+  const inputs = await page.$$('input[accept*=".zip"]')
+  const fileInput = inputs.at(-1)
   if (!fileInput) {
     return false
   }
@@ -197,9 +199,35 @@ try {
   check('侧边栏显示这条对话的费用', (chatText.match(/≈¥/g) ?? []).length >= 2)
   await shot('03-chat')
 
-  // ---- 置顶 ----
+  // ---- 置顶（同时验证菜单定位没有被隐藏的触发按钮带偏） ----
   check('打开会话菜单', await openSessionMenu())
-  await sleep(300)
+  await sleep(400)
+  const menuPlacement = await page.evaluate(() => {
+    const items = [...document.querySelectorAll('div[class*="item-"]')]
+    const item = items.find((element) => element.textContent?.includes('测试会话标题'))
+    const menu = document.querySelector('[role="menu"]')
+    if (!item || !menu) {
+      return null
+    }
+    const anchor = item.getBoundingClientRect()
+    const floating = menu.getBoundingClientRect()
+    return {
+      itemBottom: anchor.bottom,
+      itemRight: anchor.right,
+      menuTop: floating.top,
+      menuLeft: floating.left,
+    }
+  })
+  check(
+    '会话菜单定位在触发按钮附近',
+    Boolean(menuPlacement) &&
+      menuPlacement.menuTop >= menuPlacement.itemBottom - 10 &&
+      menuPlacement.menuTop <= menuPlacement.itemBottom + 80 &&
+      menuPlacement.menuLeft > menuPlacement.itemRight - 200,
+    menuPlacement
+      ? `条目底部 ${Math.round(menuPlacement.itemBottom)}，菜单顶部 ${Math.round(menuPlacement.menuTop)}`
+      : ''
+  )
   await clickText('置顶')
   check('置顶分组出现', await waitForText('置顶', 8000))
   await shot('04-pinned')
@@ -282,9 +310,20 @@ try {
   check('导出全部对话 ZIP', allZipOk)
   await shot('11-export-all')
 
-  // ---- 退出登录 → 重新登录 ----
+  // ---- 侧边栏「导入对话」按钮（默认追加） ----
   await page.keyboard.press('Escape')
-  await sleep(300)
+  await sleep(400)
+  const beforeSidebarImport = await siderSessionCount()
+  check('侧边栏有导入按钮', await tryClickText('导入对话'))
+  check('选择 ZIP（侧边栏导入）', await uploadZip('single-session.zip'))
+  check(
+    '侧边栏导入后会话数 +1',
+    await waitFor(async () => (await siderSessionCount()) === beforeSidebarImport + 1, 20000),
+    `导入前 ${beforeSidebarImport} 条，现在 ${await siderSessionCount()} 条`
+  )
+  await shot('12-sidebar-import')
+
+  // ---- 退出登录 → 重新登录 ----
   await clickText('设置')
   await sleep(400)
   await clickText('账号')
@@ -299,7 +338,7 @@ try {
       .then(() => true)
       .catch(() => false)
   )
-  await shot('12-logged-out')
+  await shot('13-logged-out')
 
   const loginInputs = await page.$$('input')
   await loginInputs[0].type(username)
@@ -314,7 +353,63 @@ try {
   )
   await sleep(1000)
   check('重新登录后历史仍在', await waitForText(TITLE, 10000))
-  await shot('13-login-again')
+  await shot('14-login-again')
+
+  // 重新登录后默认在欢迎页，先打开一条会话再验证标题重命名
+  await page.evaluate((title) => {
+    const elements = [...document.querySelectorAll('div, button, span')]
+    const target = elements.find(
+      (element) => element.textContent?.trim() === title && element.children.length === 0
+    )
+    target?.click()
+  }, TITLE)
+  await sleep(900)
+
+  // ---- 点击标题就地重命名（与网页端一致） ----
+  const titleButton = await page.$('button[title="点击重命名"]')
+  check('会话标题可点击重命名', Boolean(titleButton))
+  if (titleButton) {
+    await titleButton.click()
+    await sleep(400)
+    const titleInput = await page.$('input:not([type="file"])')
+    check('标题进入编辑态', Boolean(titleInput))
+    if (titleInput) {
+      await titleInput.click({ clickCount: 3 })
+      await page.keyboard.press('Backspace')
+      await page.keyboard.type('重命名后的会话')
+      await page.keyboard.press('Enter')
+      check('标题重命名生效', await waitForText('重命名后的会话', 8000))
+      const headerTitle = await page.evaluate(
+        () => document.querySelector('button[title="点击重命名"]')?.textContent?.trim() ?? ''
+      )
+      const titleBox = await page.evaluate(() => {
+        const button = document.querySelector('button[title="点击重命名"]')
+        if (!button) {
+          return null
+        }
+        const parent = button.parentElement
+        const header = button.closest('div[class*="header-"]')
+        return {
+          text: button.textContent,
+          clientWidth: button.clientWidth,
+          scrollWidth: button.scrollWidth,
+          parentWidth: parent ? parent.clientWidth : null,
+          headerWidth: header ? header.clientWidth : null,
+        }
+      })
+      check(
+        '头部标题完整显示（未被截断）',
+        headerTitle === '重命名后的会话' &&
+          Boolean(titleBox) &&
+          titleBox.scrollWidth <= titleBox.clientWidth + 1,
+        titleBox ? JSON.stringify(titleBox) : ''
+      )
+      await shot('15-renamed')
+      await page.reload({ waitUntil: 'networkidle2' })
+      await sleep(1200)
+      check('刷新后新标题仍在（已保存到服务端）', await waitForText('重命名后的会话', 10000))
+    }
+  }
 } catch (error) {
   check(`未捕获异常：${error.message}`, false)
   await shot('99-error').catch(() => {})

@@ -15,12 +15,9 @@
   background: var(--dsw-alias-bg-base);
 }
 
-.title {
-  max-width: 480px;
-  padding: 8px 12px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.titleWrap {
+  max-width: min(480px, 100%);
+  min-width: 0;
   font: var(--dsw-font-s-strong-14);
   color: var(--dsw-alias-label-primary);
 }

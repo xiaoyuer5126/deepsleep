@@ -119,8 +119,10 @@
 
 .bottom {
   display: flex;
+  flex-direction: column;
+  gap: 2px;
   flex-shrink: 0;
-  height: 64px;
+  padding: 8px 0;
 }
 
 .settings {

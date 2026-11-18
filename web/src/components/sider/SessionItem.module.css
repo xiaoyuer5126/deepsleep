@@ -24,7 +24,7 @@
     &:hover,
     &.active {
       .action {
-        display: flex;
+        visibility: visible;
       }
     }
   }
@@ -70,8 +70,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 常驻占位但默认隐藏：菜单打开时按钮仍可测量，浮层不会被定位到视口左上角 */
 .action {
-  display: none;
+  display: flex;
+  visibility: hidden;
   flex-shrink: 0;
   margin-left: 4px;
 }
@@ -92,7 +94,7 @@
 
 @media (hover: none) {
   .action {
-    display: flex;
+    visibility: visible;
   }
 }
 

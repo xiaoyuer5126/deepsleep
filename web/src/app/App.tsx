@@ -17,7 +17,7 @@ import { closeSearchPanel } from '../components/search/searchPanelState.js'
 import { SessionView } from '../components/session/SessionView.js'
 import { MobileHeader } from '../components/session/MobileHeader.js'
 import { Welcome } from '../components/session/Welcome.js'
-import { openSettings } from '../components/settings/settingsDialogState.js'
+import { openSettings, closeSettings } from '../components/settings/settingsDialogState.js'
 import { SettingsDialog } from '../components/settings/SettingsDialog.js'
 import { Toast } from '../components/base/Toast.js'
 import { showToast } from '../components/base/toastState.js'
@@ -35,6 +35,13 @@ export const App = () => {
   useEffect(() => {
     void initAuth()
   }, [])
+
+  // 退出登录 / 登录过期时关闭设置弹窗，避免重新登录后弹窗还开着
+  useEffect(() => {
+    if (status !== 'authed') {
+      closeSettings()
+    }
+  }, [status])
 
   if (status === 'loading') {
     return <AppLoading />

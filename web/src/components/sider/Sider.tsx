@@ -1,8 +1,14 @@
 import clsx from 'clsx'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslate } from '../../i18n/index.js'
-import { IconPanelLeftOutline16, IconSettingsOutline16, NewChatIcon } from '../base/icons.js'
+import {
+  IconPanelLeftOutline16,
+  IconSettingsOutline16,
+  IconUploadOutline14,
+  NewChatIcon,
+} from '../base/icons.js'
 import { setSiderCollapsed } from '../../services/settings.js'
+import { importHistory } from '../../services/chat/backup.js'
 import { groupSessions } from '../../services/chat/sessionGroups.js'
 import { newChat, removeSession, useChatStore } from '../../services/chat/store.js'
 import type { SessionSummary } from '../../services/chat/types.js'
@@ -92,6 +98,7 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
         </div>
       </div>
       <div className={styles.bottom}>
+        <SiderImportButton />
         <button type="button" className={styles.settings} onClick={() => openSettings('general')}>
           <span className={styles.settingsIcon}>
             <IconSettingsOutline16 />
@@ -137,6 +144,58 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
         </Modal>
       ) : null}
     </div>
+  )
+}
+
+/** 侧边栏底部：直接选 ZIP 导入（默认追加，不覆盖现有对话） */
+const SiderImportButton = () => {
+  const t = useTranslate()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const importing = useChatStore((state) => state.importingHistory)
+  const [busy, setBusy] = useState(false)
+
+  const onSelect = async (file: File | undefined) => {
+    if (!file || busy) {
+      return
+    }
+    setBusy(true)
+    try {
+      const count = await importHistory(file, 'append')
+      showToast({ key: count === 1 ? 'historyImportedOne' : 'historyImported', params: { count } })
+    } catch {
+      showToast({ key: 'historyImportFailed', type: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.settings}
+        disabled={busy || importing}
+        onClick={() => inputRef.current?.click()}
+      >
+        <span className={styles.settingsIcon}>
+          <IconUploadOutline14 />
+        </span>
+        <span className={styles.settingsLabel}>
+          {t(busy ? 'historyImporting' : 'sidebarImportChat')}
+        </span>
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".zip,application/zip,application/x-zip-compressed"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          void onSelect(file)
+        }}
+      />
+    </>
   )
 }
 

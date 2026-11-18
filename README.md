@@ -7,9 +7,9 @@
 - **API Key 绑定在账号下**（服务端加密保存，浏览器永远拿不到明文），也支持「服务器一个 Key 给多人共用」
 - **去掉了「模型内容安全」**：请求里不再携带 `safety_check`，服务端代理还会兜底删除该参数
 - **费用可见**：每条回答下方显示本次估算费用，侧边栏每条对话显示累计费用（口径与官方计费一致，见[费用估算](#九费用估算口径)）
-- **对话管理**：置顶 / 取消置顶、单条对话导出为 ZIP、导入支持「追加」或「覆盖」两种模式
+- **对话管理**：置顶 / 取消置顶、**点击标题就地重命名**、单条对话导出为 ZIP、侧边栏「导入对话」一键导入（默认追加，也可覆盖）
 - 品牌标识：站点名「私有 DeepSeek」，使用 DeepSeek 鲸鱼图标 + 右上角私有部署小标志
-- 全部运行在 Docker 里，宿主机只需要 Docker，不用装 Node / pnpm；自带 `cloudflared` 容器可一键暴露到公网
+- 全部运行在 Docker 里，宿主机只需要 Docker，不用装 Node / pnpm；**默认通过 `cloudflared` 隧道访问，应用容器不向宿主机暴露任何端口**
 
 > 数据默认落在 `./data`：SQLite（会话、账号、附件 BLOB、API Key 密文）+ 自动生成的 `app-secret`。备份 = 拷走这个目录。
 
@@ -23,6 +23,10 @@
 |---|---|
 | ![置顶](docs/screenshots/04-pinned.png) | ![导入](docs/screenshots/09-import-append.png) |
 
+| 侧边栏一键导入 | 点击标题就地重命名 |
+|---|---|
+| ![侧边栏导入](docs/screenshots/12-sidebar-import.png) | ![重命名](docs/screenshots/15-renamed.png) |
+
 截图来自容器内的自动化冒烟测试（mock 模型回复），更多截图见 [`docs/screenshots`](docs/screenshots)。
 
 ---
@@ -30,15 +34,21 @@
 ## 一、快速开始
 
 ```bash
-# 1. 可选：准备配置（不配置也能跑）
+# 1. 准备配置
 cp .env.example .env
-# 编辑 .env，至少可以设置 DEFAULT_DEEPSEEK_API_KEY 让所有人共用一个 Key
+# 必填：在 Cloudflare Zero Trust 创建 tunnel 后把 token 填到 CLOUDFLARE_TUNNEL_TOKEN
+# 建议同时填 COOKIE_SECURE=true、TRUST_PROXY=true（走 HTTPS 隧道）
+# 可选：DEFAULT_DEEPSEEK_API_KEY=sk-...（服务器默认 Key，所有人共用）
 
-# 2. 构建并启动
+# 2. 构建并启动（应用容器不映射宿主机端口，只通过 cloudflared 隧道访问）
 docker compose up -d --build
 
-# 3. 打开 http://localhost:3080，注册第一个账号
+# 3. 浏览器访问 Cloudflare 后台给该 tunnel 配置的域名（Public Hostname 指向 http://deepseek-web:3080）
+#    注册第一个账号即可使用
 ```
+
+> 没有 token 时 `cloudflared` 会反复重启（属正常，日志会提示缺少 token）。
+> 想先在本机直连调试：取消 `docker-compose.yml` 里 `deepseek-web` 的 `ports` 注释（仅监听 127.0.0.1:3080），再 `docker compose up -d`。
 
 ### 国内网络加速
 
@@ -123,8 +133,8 @@ docker compose up -d --build # 重新构建升级
 | 文件、图片上传（PDF/Word/PPT/图片等，Files API） | ✅ |
 | 朗读回答（TTS）、语音输入（ASR） | ✅ 通过后端代理 |
 | 编辑消息、重新生成、继续生成、消息分支切换 | ✅ |
-| 自动会话标题、重命名、删除 | ✅ |
-| 会话置顶、单条对话导出 | ✅（本改造新增） |
+| 自动会话标题、重命名、删除 | ✅（标题支持点击就地重命名） |
+| 会话置顶、单条对话导出、侧边栏一键导入 | ✅（本改造新增） |
 | Markdown、代码高亮、KaTeX、Mermaid | ✅ |
 | 中英双语、深浅色、移动端布局、位置信息 | ✅ |
 | 账号密码登录、多端同步、账号级 API Key | ✅（本改造新增） |
@@ -231,9 +241,9 @@ PRICING_JSON={"models":{"deepseek-flash":{"inputCacheHit":0.02,"inputCacheMiss":
 
 ---
 
-## 十、通过 Cloudflare Tunnel 暴露到公网（可选）
+## 十、Cloudflare Tunnel（默认访问方式）
 
-compose 里已内置 `cloudflared` 服务（`profiles: ["tunnel"]`，默认不启动），适合没有公网 IP 的机器：
+`cloudflared` 是 compose 里的默认服务，随 `docker compose up -d` 一起启动；**应用容器不向宿主机映射任何端口**（只 `expose` 给 compose 内网），唯一入口就是 Cloudflare 隧道：
 
 1. Cloudflare Zero Trust → Networks → Tunnels → 新建 tunnel（选 cloudflared）→ 复制 token
 2. 在 `.env` 里填：
@@ -243,19 +253,13 @@ compose 里已内置 `cloudflared` 服务（`profiles: ["tunnel"]`，默认不�
    TRUST_PROXY=true        # 让登录限流拿到真实 IP
    ```
 3. Cloudflare 后台给这个 tunnel 配 Public Hostname：子域名 → 服务填 `http://deepseek-web:3080`
-4. 启动：
-   ```bash
-   docker compose --profile tunnel up -d
-   ```
-   `cloudflared` 走 compose 内网访问应用，**不需要**把 3080 映射到公网，可把 `ports` 改成 `"127.0.0.1:3080:3080"` 只保留本机访问。
+4. `docker compose up -d`，然后访问你的域名
 
-临时试用（无需账号，生成随机 `*.trycloudflare.com` 域名，仅用于测试）：
+说明：
 
-```bash
-docker compose run --rm --no-deps cloudflared tunnel --url http://deepseek-web:3080
-```
-
-（临时域名每次启动都会变，且不会带上 `COOKIE_SECURE` 的 HTTPS 适配，正式使用请用上面的 token 方式。）
+- 没填 token 时 `cloudflared` 容器会反复重启（日志提示缺少 token），填好后 `docker compose up -d` 即恢复，不影响应用容器。
+- 本机想直连调试：取消 `deepseek-web` 的 `ports` 注释（`"127.0.0.1:3080:3080"`，仅本机可访问），再 `docker compose up -d`。
+- `cloudflared` 官方镜像是 distroless（没有 shell），所以不支持容器内自动降级成 quick tunnel；临时试用可以在宿主机装一次 cloudflared 二进制跑 `cloudflared tunnel --url http://127.0.0.1:3080`，或按上面的方式配好 token。
 
 ---
 
@@ -293,7 +297,7 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 
 - 后端：**13 项** `node:test` 端到端测试（注册登录、改密、跨账号隔离、会话 CRUD、置顶排序、附件上传下载与回收、导入原子替换、**追加导入与 id 冲突换新**、API Key 加密绑定、SSE 透传、`safety_check` 被删除、默认 Key 回落、CSRF 拦截）
 - 前端：`tsc` 类型检查 + `oxlint` 零告警
-- 浏览器（headless Chromium）：**26 项**检查全部通过——注册进入对话、流式回答、思考块、消息与侧边栏费用、置顶、刷新后历史恢复、单条对话导出 ZIP、绑定 Key 后刷新仍生效、**追加导入 / 覆盖导入**、导出全部对话、退出重登、控制台零报错
+- 浏览器（headless Chromium）：**35 项**检查全部通过——注册进入对话、流式回答、思考块、消息与侧边栏费用、置顶、**会话菜单定位**、刷新后历史恢复、单条对话导出 ZIP、绑定 Key 后刷新仍生效、**追加导入 / 覆盖导入 / 侧边栏一键导入**、导出全部对话、退出重登、**点击标题重命名**、控制台零报错
 
 > 注意：`server/test/mock-server.mjs` 是常驻 mock 服务，测试命令已显式指定 `test/e2e.test.js`，避免 `node --test` 把它当测试文件加载导致进程不退出。
 
@@ -319,7 +323,7 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 | `MAX_UPLOAD_BYTES` | 96MB | 单个附件原件上限 |
 | `PRICING_JSON` | 官方价 | 覆盖费用估算单价，见[费用估算口径](#九费用估算口径) |
 | `TZ` | `Asia/Shanghai` | 时区（高峰时段判断按北京时间，与容器时区无关） |
-| `CLOUDFLARE_TUNNEL_TOKEN` | 空 | cloudflared 的 tunnel token，见[Cloudflare Tunnel](#十通过-cloudflare-tunnel-暴露到公网可选) |
+| `CLOUDFLARE_TUNNEL_TOKEN` | 空（必填） | cloudflared 的 tunnel token，见[Cloudflare Tunnel](#十cloudflare-tunnel默认访问方式) |
 | `NPM_REGISTRY` | `https://registry.npmmirror.com` | 构建时 npm 源（仅构建阶段生效） |
 | `NODE_IMAGE` | `node:24-bookworm-slim` | 构建用基础镜像，可替换为国内镜像仓库地址 |
 

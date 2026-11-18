@@ -3,10 +3,11 @@ import { useTranslate } from '../../i18n/index.js'
 import { newChat } from '../../services/chat/store.js'
 import { IconButton } from '../base/IconButton.js'
 import { openMobileSider } from '../sider/mobileSiderState.js'
+import { SessionTitle } from './SessionTitle.js'
 import styles from './MobileHeader.module.css'
 
-/** 移动端顶栏：左侧菜单打开侧边栏；会话页再显示标题与开启新对话 */
-export const MobileHeader = ({ title }: { title?: string }) => {
+/** 移动端顶栏：左侧菜单打开侧边栏；会话页再显示可重命名的标题与开启新对话 */
+export const MobileHeader = ({ title, sessionId }: { title?: string; sessionId?: string }) => {
   const t = useTranslate()
   return (
     <div className={styles.header}>
@@ -19,7 +20,9 @@ export const MobileHeader = ({ title }: { title?: string }) => {
       />
       {title === undefined ? null : (
         <>
-          <div className={styles.title}>{title}</div>
+          <div className={styles.title}>
+            {sessionId ? <SessionTitle id={sessionId} title={title} /> : title}
+          </div>
           <IconButton
             size="xl"
             tone="primary"

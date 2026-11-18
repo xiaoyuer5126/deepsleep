@@ -5,6 +5,7 @@ import type { Session } from '../../services/chat/types.js'
 import { ChatInput } from '../chatInput/ChatInput.js'
 import { MessageList } from '../messages/MessageList.js'
 import { MobileHeader } from './MobileHeader.js'
+import { SessionTitle } from './SessionTitle.js'
 import styles from './SessionView.module.css'
 
 /** 会话页：标题栏（移动端为顶栏）+ 消息列表，输入框吸底 */
@@ -19,15 +20,14 @@ export const SessionView = ({
 }) => {
   const t = useTranslate()
   const isMobile = useIsMobile()
-  const title = session.title || t('untitledChat')
   return (
     <div className={styles.view}>
       {isMobile ? (
-        <MobileHeader title={title} />
+        <MobileHeader title={session.title} sessionId={session.id} />
       ) : (
         <div className={styles.header}>
-          <div className={clsx(styles.title, siderCollapsed && styles.withCollapsedSider)}>
-            {title}
+          <div className={clsx(styles.titleWrap, siderCollapsed && styles.withCollapsedSider)}>
+            <SessionTitle id={session.id} title={session.title} />
           </div>
         </div>
       )}
