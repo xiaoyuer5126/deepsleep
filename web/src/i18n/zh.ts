@@ -1,5 +1,9 @@
 export const zh = {
   welcomeMessageChat250808: '今天有什么可以帮到你？',
+  welcomeGreetingMorning: '早上好',
+  welcomeGreetingAfternoon: '下午好',
+  welcomeGreetingEvening: '晚上好',
+  welcomeGreetingLine: '{greeting}，我能帮什么忙吗？',
   contentCaveat: '内容由 AI 生成，请仔细甄别',
   expandSiderbarButton: '打开边栏',
   collapseSiderbarButton: '收起边栏',
