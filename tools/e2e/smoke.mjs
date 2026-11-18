@@ -272,6 +272,7 @@ try {
   await shot('07-account')
   const accountText = await bodyText()
   check('账号页展示用户名', accountText.includes(username))
+  check('账号页显示累计花费', accountText.includes('对话总花费'))
   const keyInput = await page.$('input[placeholder*="API Key"]')
   check('账号页有 API Key 输入框', Boolean(keyInput))
   if (keyInput) {

@@ -16,6 +16,18 @@ export type StoredFile = {
 /** 已下载的原件缓存：同一附件在列表里会多次读取，避免重复请求。 */
 const fileCache = new Map<string, Blob>()
 
+/** 已成功存到服务器的原件 id，避免「选中时预上传」和「发送时保存会话」重复上传。 */
+const storedIds = new Set<string>()
+
+/**
+ * 非图片原件的额外存一份的大小上限。历史消息里已经有 DeepSeek 的 file_id，
+ * 跨设备只影响「打开原件」，不影响提问；大文件（常见 PDF/PPT）跳过可省一半隧道流量。
+ */
+const MAX_NON_IMAGE_STORE_BYTES = 8 * 1024 * 1024
+
+const shouldStore = (file: StoredFile) =>
+  file.blob.type.startsWith('image/') || file.blob.size <= MAX_NON_IMAGE_STORE_BYTES
+
 export const loadSessionSummaries = async (): Promise<SessionSummary[]> => {
   const data = await requestJson<{ sessions: SessionSummary[] }>('/api/sessions')
   return data.sessions
@@ -43,12 +55,18 @@ const uploadFile = async (file: StoredFile): Promise<void> => {
       headers: { 'Content-Type': mime || 'application/octet-stream' },
     }
   )
+  storedIds.add(file.id)
   fileCache.set(file.id, file.blob)
 }
 
 export const saveFiles = async (files: StoredFile[]): Promise<void> => {
+  // 已存过、或超过上限的非图片原件直接跳过；图片始终存一份用于跨设备预览
+  const pending = files.filter((file) => !storedIds.has(file.id) && shouldStore(file))
+  if (pending.length === 0) {
+    return
+  }
   // 同时最多 3 个上传，避免一次选中很多附件时打满连接
-  const queue = [...files]
+  const queue = [...pending]
   const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
     for (let file = queue.shift(); file; file = queue.shift()) {
       await uploadFile(file)

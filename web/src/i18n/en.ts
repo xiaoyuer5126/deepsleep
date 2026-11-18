@@ -228,6 +228,9 @@ export const en = {
   settingDialogAsideAccountOptionLabel: 'Account',
   accountSectionTitle: 'Account',
   accountUsername: 'Username',
+  accountTotalCost: 'Total spend',
+  accountTotalCostHint:
+    'Estimated at official prices across {tokens} tokens. Excludes speech and file parsing; refer to your bill.',
   accountApiKey: 'API Key',
   accountApiKeyBound: 'Bound {mask}',
   accountApiKeyServerDefault: 'Not bound. Using the server default key.',

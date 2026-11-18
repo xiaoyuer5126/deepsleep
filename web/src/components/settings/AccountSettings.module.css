@@ -35,6 +35,14 @@
   word-break: break-all;
 }
 
+.costValue {
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-brand-text);
+}
+
 .actions {
   display: flex;
   flex-shrink: 0;

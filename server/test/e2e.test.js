@@ -527,6 +527,29 @@ test('历史导入：追加模式保留现有对话，id 冲突自动换新', as
   assert.equal(replaced.json.sessions[0].id, 'only-one')
 })
 
+test('账号用量汇总：累计所有会话的 token 与联网次数', async () => {
+  const { base } = await startApp()
+  const client = makeClient(base)
+  await register(client)
+
+  await client.call('PUT', '/api/sessions/s1', { body: { session: sampleSession('s1') } })
+  await client.call('PUT', '/api/sessions/s2', { body: { session: sampleSession('s2') } })
+
+  const account = await client.call('GET', '/api/account')
+  assert.equal(account.status, 200)
+  const usage = account.json.account.usage
+  assert.equal(usage.offPeak.inputMiss, 200)
+  assert.equal(usage.offPeak.cacheHit, 100)
+  assert.equal(usage.offPeak.output, 40)
+  assert.equal(usage.offPeak.searches, 2)
+
+  // 删除一条对话后合计随之减少
+  await client.call('DELETE', '/api/sessions/s1')
+  const after = await client.call('GET', '/api/account')
+  assert.equal(after.json.account.usage.offPeak.inputMiss, 100)
+  assert.equal(after.json.account.usage.offPeak.searches, 1)
+})
+
 test('跨站写请求被拒绝', async () => {
   const { base } = await startApp()
   const client = makeClient(base)

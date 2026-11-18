@@ -227,6 +227,7 @@ docker compose up -d --build # 重新构建升级
 
 - 每条回答下方：这一轮的费用（按该回答的 `createdAt` 判断高峰/空闲）
 - 左侧会话列表：这条对话的累计费用（服务端把每条消息的用量按高峰/空闲分桶汇总，前端用当前单价换算）
+- 设置 → 账号：**当前账号全部对话的累计花费**（服务端汇总所有会话的用量，统一按 deepseek-flash 单价估算）
 
 不包含：TTS、ASR、文件解析 / OCR 的费用，以及官方可能给出的折扣、赠送余额、模型映射等差异。所以是**估算值，仅供参考，以 DeepSeek 账单为准**。
 
@@ -322,6 +323,7 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 | `MAX_JSON_BYTES` | 48MB | 单条会话 JSON 上限 |
 | `MAX_UPLOAD_BYTES` | 96MB | 单个附件原件上限 |
 | `PRICING_JSON` | 官方价 | 覆盖费用估算单价，见[费用估算口径](#九费用估算口径) |
+| `LOG_REQUESTS` | 空 | 设为 `1` 时打印每个 API 请求的耗时/大小，排查上传或代理慢 |
 | `TZ` | `Asia/Shanghai` | 时区（高峰时段判断按北京时间，与容器时区无关） |
 | `CLOUDFLARE_TUNNEL_TOKEN` | 空（必填） | cloudflared 的 tunnel token，见[Cloudflare Tunnel](#十cloudflare-tunnel默认访问方式) |
 | `NPM_REGISTRY` | `https://registry.npmmirror.com` | 构建时 npm 源（仅构建阶段生效） |
@@ -329,7 +331,38 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 
 ---
 
-## 十三、来源与许可
+## 十三、附件上传与上下文管理
+
+### 附件上传流程
+
+一次附件上传有两段，都经过 Cloudflare 隧道（浏览器 → Cloudflare 边缘 → 你的服务器）：
+
+1. **给模型用**：选中文件时立刻上传到 DeepSeek Files API（`/api/ds/anthropic/v1/files`，由后端代理，multipart 流式转发）。PDF/Word/PPT 会触发服务端版面解析，本身耗时。
+2. **给多端预览用**：把原件存进你服务器的 SQLite（图片缩略图、跨设备打开靠它）。
+
+优化点：
+
+- 第 2 段改为**选中文件时就与第 1 段并行上传**（`web/src/services/chat/drafts.ts`），并按附件 id 去重（`web/src/services/chat/db.ts` 的 `storedIds`），发送时不再串行叠加一次上传。
+- **非图片原件超过 8MB 不再存第二份**（历史里已有 DeepSeek `file_id`，跨设备只影响「打开原件」，不影响提问），避免大 PDF/PPT 把隧道上行带宽占满。
+- 排查慢在哪：`.env` 里设 `LOG_REQUESTS=1`，然后 `docker compose logs -f deepseek-web`，可以看到每个请求的耗时和大小（例如 Files API 代理 vs 本地原件的时间占比）。
+
+> 提示：家用带宽 + 免费 Cloudflare 隧道的上行是主要瓶颈；如果经常传大文件，把 `deepseek-web` 的端口临时映射到本机（compose 里注释的 `ports`）并走局域网访问会明显更快。
+
+### 上下文管理
+
+每轮请求由前端重新组装**当前分支的完整历史**，规则：
+
+- 只保留「用户提问 + 有有效回答」成对的轮次；报错、停止、空回答、拒答的轮次不进上下文
+- 历史思考不回传，只回传回答正文；相邻文本合并，引用标记去掉
+- 历史联网搜索结果/打开网页块不回传；只有「阅读链接」的调用+结果带 `signature` 原样回传（服务端还原网页正文）
+- 附件按 `file_id` 引用（图片 `image` 块 / 文档 `document` 块）；没有 `file_id` 又没有本地原件的附件会跳过
+- 继续生成时把最后一条回答作为 assistant 前缀（含思考签名）
+- 日期/位置等用户元信息变化时以 `latest_reminder` 插入
+- 没有本地截断/摘要：依赖模型 1M 上下文，超限会返回 400；如有需要可以加「按 token 预算丢弃最早轮次」策略
+
+---
+
+## 十四、来源与许可
 
 - 前端基于 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo)（MIT License），保留了其 `LICENSE` 与界面代码，改造了登录、存储、代理与设置部分；图标为项目自定义的 DeepSleep 睡眠鲸鱼图。
 - 界面协议说明见 [DeepSeek API 文档 · 构建 Chatbot](https://api-docs.deepseek.com/zh-cn/guides/build_a_chatbot)，价格页见 [模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)。

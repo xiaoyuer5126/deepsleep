@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { requestJson, UNAUTHORIZED_EVENT } from './api/backend.js'
 import type { PricingConfig } from './pricing.js'
+import type { SessionUsage } from './pricing.js'
 import { resetChatStore } from './chat/store.js'
 
 /** 账号信息：API Key 绑定在账号上，多端登录共用。 */
@@ -15,6 +16,8 @@ export type AccountUser = {
   /** 未绑定但服务器配置了默认 Key */
   usingServerApiKey: boolean
   serverApiKeyAvailable?: boolean
+  /** 账号下全部会话的用量合计，用于显示累计花费 */
+  usage?: SessionUsage | null
 }
 
 export type PublicConfig = {

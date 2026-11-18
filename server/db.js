@@ -371,6 +371,37 @@ export class Store {
     }
   }
 
+  /** 账号下全部会话的用量合计（用于「账号」页显示累计花费） */
+  getUserUsage(userId) {
+    const empty = () => ({ inputMiss: 0, cacheHit: 0, output: 0, searches: 0 })
+    const total = { peak: empty(), offPeak: empty() }
+    const rows = this.db
+      .prepare('SELECT usage FROM conversations WHERE user_id = ?')
+      .all(userId)
+    for (const row of rows) {
+      if (!row.usage) {
+        continue
+      }
+      let usage
+      try {
+        usage = JSON.parse(row.usage)
+      } catch {
+        continue
+      }
+      for (const key of ['peak', 'offPeak']) {
+        const bucket = usage?.[key]
+        if (!bucket) {
+          continue
+        }
+        total[key].inputMiss += bucket.inputMiss ?? 0
+        total[key].cacheHit += bucket.cacheHit ?? 0
+        total[key].output += bucket.output ?? 0
+        total[key].searches += bucket.searches ?? 0
+      }
+    }
+    return total
+  }
+
   deleteSession(userId, id) {
     this.transaction(() => {
       this.db

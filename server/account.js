@@ -35,6 +35,8 @@ export const createAccountRouter = ({ store, config }) => {
       apiKeyMasked: ownKey ? maskApiKey(ownKey) : '',
       usingServerApiKey: !user.api_key_cipher && Boolean(config.defaultApiKey),
       serverApiKeyAvailable: Boolean(config.defaultApiKey),
+      // 账号下全部会话的用量合计，前端按当前单价估算累计花费
+      usage: store.getUserUsage(user.id),
     }
   }
 

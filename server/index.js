@@ -26,6 +26,23 @@ export const createApp = ({ config, store }) => {
     res.json({ ok: true, time: Date.now() })
   })
 
+  // 可选请求日志：LOG_REQUESTS=1 时打印每个 API 的耗时与大小，便于排查上传/代理慢
+  if (config.logRequests) {
+    app.use((req, res, next) => {
+      const started = Date.now()
+      res.on('finish', () => {
+        const size = req.headers['content-length']
+        // eslint-disable-next-line no-console
+        console.log(
+          `[req] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${Date.now() - started}ms${
+            size ? ` ${size}B` : ''
+          }`
+        )
+      })
+      next()
+    })
+  }
+
   app.use('/api/ds', sameOrigin, createProxyRouter({ store, config }))
   app.use('/api/files', sameOrigin, createFileRouter({ store, config }))
   app.use('/api/import', sameOrigin, createImportRouter({ store, config }))

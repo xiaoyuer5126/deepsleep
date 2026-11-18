@@ -8,6 +8,7 @@ import {
   saveApiKey,
   useAuth,
 } from '../../services/auth.js'
+import { estimateSessionCost, formatCost } from '../../services/pricing.js'
 import { Button } from '../base/Button.js'
 import { Modal } from '../base/Modal.js'
 import styles from './AccountSettings.module.css'
@@ -110,6 +111,18 @@ export const AccountSettings = () => {
       ? t('accountApiKeyServerDefault')
       : t('accountApiKeyMissing')
 
+  // 账号下全部会话的累计用量 → 估算总花费
+  const totalCost = estimateSessionCost(user.usage)
+  const totalTokens = user.usage
+    ? ['peak', 'offPeak'].reduce((sum, key) => {
+        const bucket = user.usage?.[key as 'peak' | 'offPeak']
+        return (
+          sum +
+          (bucket ? bucket.inputMiss + bucket.cacheHit + bucket.output : 0)
+        )
+      }, 0)
+    : 0
+
   return (
     <div className={styles.container}>
       <div className={styles.cell}>
@@ -117,6 +130,18 @@ export const AccountSettings = () => {
           <div className={styles.label}>{t('accountUsername')}</div>
         </div>
         <div className={styles.value}>{user.username}</div>
+      </div>
+
+      <div className={styles.cell}>
+        <div className={styles.text}>
+          <div className={styles.label}>{t('accountTotalCost')}</div>
+          <div className={styles.description}>
+            {t('accountTotalCostHint', { tokens: totalTokens.toLocaleString() })}
+          </div>
+        </div>
+        <div className={styles.costValue}>
+          {totalCost > 0 ? t('messageCostLabel', { cost: formatCost(totalCost) }) : '—'}
+        </div>
       </div>
 
       <div className={styles.cell}>

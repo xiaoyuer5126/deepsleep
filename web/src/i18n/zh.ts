@@ -219,6 +219,8 @@ export const zh = {
   settingDialogAsideAccountOptionLabel: '账号',
   accountSectionTitle: '账号信息',
   accountUsername: '用户名',
+  accountTotalCost: '对话总花费',
+  accountTotalCostHint: '按 DeepSeek 官方单价估算，累计 {tokens} tokens；不含语音、文件解析，以账单为准',
   accountApiKey: 'API Key',
   accountApiKeyBound: '已绑定 {mask}',
   accountApiKeyServerDefault: '未绑定，正在使用服务器默认 Key',

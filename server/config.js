@@ -97,6 +97,8 @@ export const loadConfig = (overrides = {}) => {
     maxJsonBytes: int(process.env.MAX_JSON_BYTES, 48 * 1024 * 1024),
     maxUploadBytes: int(process.env.MAX_UPLOAD_BYTES, 96 * 1024 * 1024),
     logLevel: process.env.LOG_LEVEL ?? 'info',
+    // 打印每个 API 请求的耗时与大小，排查上传/代理慢的问题时置 1
+    logRequests: bool(process.env.LOG_REQUESTS, false),
     pricing: parsePricing(),
   }
   config.secret = overrides.secret ?? loadSecret(dataDir)

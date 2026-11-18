@@ -9,6 +9,7 @@ import {
   validateFiles,
   type UploadTask,
 } from '../attachments.js'
+import * as db from './db.js'
 import type { FileAttachment } from './types.js'
 
 export type DraftAttachment = {
@@ -54,6 +55,9 @@ const upload = (attachment: DraftAttachment) => {
     attachment.file.name,
     attachment.isImage
   ).catch(() => {})
+  // 同时把原件存到自建服务器（多端预览用）：与上面的 DeepSeek 上传并行，
+  // 发送时 saveFiles 会因 id 已存而跳过，避免把大文件串行上传两遍。
+  void db.saveFiles([{ id: attachment.id, blob: attachment.file }]).catch(() => {})
 }
 
 /** 整批校验通过后才创建预览和开始上传。 */
