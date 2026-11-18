@@ -299,7 +299,8 @@ networks:
 | `proxy_request_buffering off;` | 大文件上传边收边转发，避免 nginx 先落盘再转 |
 | `client_max_body_size 100m;` | 至少要 ≥ 应用的上传上限（默认 96MB） |
 | `proxy_set_header X-Forwarded-Proto $scheme;` | 后端据此给 Cookie 加 Secure（`.env` 里 `COOKIE_SECURE=true`、`TRUST_PROXY=true`） |
-| `proxy_set_header Host $host;` | 后端做同源校验（CSRF 防护） |
+| `proxy_set_header Host $host;` | **必须**：后端做同源校验（CSRF 防护）；nginx 默认会把 Host 改成上游地址，导致写请求返回 403「跨站请求被拒绝」 |
+| `proxy_set_header X-Forwarded-Host $host;` | 可选：后端兼容 Host 被改写的情况，作为同源校验的兜底 |
 
 ### 3. 如果 nginx 跑在宿主机上（不是容器）
 
@@ -319,6 +320,15 @@ ports:
 COOKIE_SECURE=true
 TRUST_PROXY=true
 ```
+
+### 5. 常见问题
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 写操作（登录/注册/发送）返回 `403 {"error":{"message":"跨站请求被拒绝"}}` | nginx 没保留原始 Host（默认会改成 `deepseek-web:3080`），与浏览器 `Origin` 不一致。加 `proxy_set_header Host $host;`；后端日志会打印 `[same-origin]` 一行说明两边 host 分别是什么 |
+| 流式回答不流式、最后整段出现 | 缺 `proxy_buffering off;`（以及 `proxy_cache off;`） |
+| 上传大文件 413 / 卡住 | nginx 加 `client_max_body_size 100m;` 和 `proxy_request_buffering off;` |
+| 登录后立刻变未登录 | `COOKIE_SECURE=true` 但实际是 http 访问；或 nginx 没传 `X-Forwarded-Proto` |
 
 ---
 

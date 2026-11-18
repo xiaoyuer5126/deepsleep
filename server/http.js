@@ -68,7 +68,11 @@ export const clearSessionCookie = (res, config, requestSecure = false) => {
   res.append('Set-Cookie', parts.join('; '))
 }
 
-/** 简单同源校验：浏览器发起的写请求若带 Origin 且与 Host 不一致则拒绝，防 CSRF。 */
+/**
+ * 同源校验：浏览器发起的写请求若带 Origin，则要求 Origin 的 hostname 属于本站，
+ * 否则拒绝（防 CSRF）。只比较 hostname、忽略端口，并兼容反向代理：
+ * Host 头、X-Forwarded-Host、以及 trust proxy 下的 req.hostname 都算「本站」。
+ */
 export const sameOrigin = (req, res, next) => {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next()
@@ -77,16 +81,41 @@ export const sameOrigin = (req, res, next) => {
   if (!origin) {
     return next()
   }
+  let originUrl
   try {
-    const originUrl = new URL(origin)
-    const host = req.headers.host ?? ''
-    if (originUrl.host !== host) {
-      return next(new AppError(403, '跨站请求被拒绝'))
-    }
+    originUrl = new URL(origin)
   } catch {
     return next(new AppError(403, '请求来源不合法'))
   }
-  return next()
+
+  const allowed = new Set()
+  const addHost = (value) => {
+    if (!value) {
+      return
+    }
+    for (const part of String(value).split(',')) {
+      const host = part.trim().toLowerCase()
+      if (!host) {
+        continue
+      }
+      // 去掉端口，只比较 hostname
+      allowed.add(host.replace(/:\d+$/, ''))
+    }
+  }
+  addHost(req.headers.host)
+  addHost(req.headers['x-forwarded-host'])
+  addHost(req.hostname)
+
+  if (allowed.has(originUrl.hostname.toLowerCase())) {
+    return next()
+  }
+
+  // 反代没保留 Host 时，日志里留一行方便定位（浏览器控制台只看得到 403）
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[same-origin] 拒绝跨站请求 method=${req.method} origin=${origin} host=${req.headers.host} x-forwarded-host=${req.headers['x-forwarded-host'] ?? ''}`
+  )
+  return next(new AppError(403, '跨站请求被拒绝'))
 }
 
 /** 从 Cookie 解析登录态；未登录时抛 401。 */

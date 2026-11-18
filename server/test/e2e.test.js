@@ -559,3 +559,24 @@ test('跨站写请求被拒绝', async () => {
   })
   assert.equal(response.status, 403)
 })
+
+test('反向代理：Host 被改写时可用 X-Forwarded-Host 通过同源校验', async () => {
+  const { base } = await startApp()
+  const client = makeClient(base)
+  await register(client)
+
+  // 模拟 nginx 默认行为：Host 变成上游地址，但带了 X-Forwarded-Host
+  const allowed = await client.call('POST', '/api/import/reset', {
+    headers: {
+      origin: 'https://deepsleep.example.com',
+      'x-forwarded-host': 'deepsleep.example.com',
+    },
+  })
+  assert.equal(allowed.status, 200)
+
+  // 端口不同但 hostname 相同也允许（https 默认端口省略等情况）
+  const sameHost = await client.call('POST', '/api/import/reset', {
+    headers: { origin: 'https://127.0.0.1' },
+  })
+  assert.equal(sameHost.status, 200)
+})
