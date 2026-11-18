@@ -1,7 +1,7 @@
 # web — 前端
 
 本目录是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo)（MIT）的改造版，作为
-「DeepSeek 私有网页版」的前端使用。**完整说明见仓库根目录的 [`README.md`](../README.md)。**
+「DeepSleep」自建网页版的前端使用。**完整说明见仓库根目录的 [`README.md`](../README.md)。**
 
 与原版的差异：
 

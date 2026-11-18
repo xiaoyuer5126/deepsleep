@@ -1,6 +1,6 @@
-# DeepSeek 私有网页版（自建 Chatbot）
+# DeepSleep（自建 DeepSeek 网页版）
 
-把 [DeepSeek 官方演示客户端 chat-demo](https://github.com/deepseek-ai/chat-demo) 改造成**多账号、多端共享、Docker 一键部署**的私有网页版：
+把 [DeepSeek 官方演示客户端 chat-demo](https://github.com/deepseek-ai/chat-demo) 改造成**多账号、多端共享、Docker 一键部署**的自建网页版，站点名为「DeepSleep」：
 
 - 复刻网页端界面与能力：深度思考、智能搜索（联网 + 边想边搜）、阅读链接、文件/图片上传、语音输入、朗读回答、消息分支（编辑 / 重新生成 / 继续生成）、Markdown / 公式 / Mermaid、中英双语、深浅色主题、**ZIP 历史对话导入导出**
 - **账号密码登录**，历史对话、附件原件都存在服务端，换设备登录同一账号即可看到全部历史
@@ -8,7 +8,7 @@
 - **去掉了「模型内容安全」**：请求里不再携带 `safety_check`，服务端代理还会兜底删除该参数
 - **费用可见**：每条回答下方显示本次估算费用，侧边栏每条对话显示累计费用（口径与官方计费一致，见[费用估算](#九费用估算口径)）
 - **对话管理**：置顶 / 取消置顶、**点击标题就地重命名**、单条对话导出为 ZIP、侧边栏「导入对话」一键导入（默认追加，也可覆盖）
-- 品牌标识：站点名「私有 DeepSeek」，使用 DeepSeek 鲸鱼图标 + 右上角私有部署小标志
+- 品牌标识：站点名「DeepSleep」，使用自定义的睡眠鲸鱼图标
 - 全部运行在 Docker 里，宿主机只需要 Docker，不用装 Node / pnpm；**默认通过 `cloudflared` 隧道访问，应用容器不向宿主机暴露任何端口**
 
 > 数据默认落在 `./data`：SQLite（会话、账号、附件 BLOB、API Key 密文）+ 自动生成的 `app-secret`。备份 = 拷走这个目录。
@@ -158,7 +158,7 @@ docker compose up -d --build # 重新构建升级
 ├── .env.example
 ├── web/                     # 前端（基于 deepseek-ai/chat-demo，MIT）
 │   └── src/
-│       ├── assets/                  # 站点图标（DeepSeek 鲸鱼 + 私有小标志）
+│       ├── assets/                  # 站点图标（DeepSleep 睡眠鲸鱼）
 │       ├── components/auth/         # 登录 / 注册页
 │       ├── components/settings/     # 设置：通用 / 账号 / 数据管理（导入追加/覆盖）
 │       ├── components/sider/        # 侧边栏：置顶、每条对话的费用
@@ -331,6 +331,6 @@ docker run --rm -v "$PWD/web/src/assets:/out" dsw-e2e \
 
 ## 十三、来源与许可
 
-- 前端基于 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo)（MIT License），保留了其 `LICENSE` 与界面代码，改造了登录、存储、代理与设置部分；站点图标使用了 DeepSeek 官方 logo 的鲸鱼标志并叠加「私有部署」小标志，仅用于区分自建实例。
+- 前端基于 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo)（MIT License），保留了其 `LICENSE` 与界面代码，改造了登录、存储、代理与设置部分；图标为项目自定义的 DeepSleep 睡眠鲸鱼图。
 - 界面协议说明见 [DeepSeek API 文档 · 构建 Chatbot](https://api-docs.deepseek.com/zh-cn/guides/build_a_chatbot)，价格页见 [模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)。
 - 本项目同样以 MIT License 提供，按「自用/小范围使用」设计，请遵守 DeepSeek 开放平台服务协议。
