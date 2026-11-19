@@ -7,7 +7,8 @@ import { after, test } from 'node:test'
 import { loadConfig } from '../config.js'
 import { openDatabase } from '../db.js'
 import { createApp } from '../index.js'
-import { startMockUpstream } from './mock-upstream.js'
+import { parseShareId, parseSignedPath } from '../share.js'
+import { sampleShare, sampleShareImage, startMockUpstream } from './mock-upstream.js'
 
 const cleanups = []
 after(async () => {
@@ -24,6 +25,8 @@ const startApp = async (options = {}) => {
     dataDir,
     secret: 'test-secret',
     apiBase: upstream.url,
+    shareApiBase: upstream.url,
+    shareFilesBase: upstream.url,
     port: 0,
     host: '127.0.0.1',
     defaultApiKey: options.defaultApiKey ?? '',
@@ -579,4 +582,52 @@ test('反向代理：Host 被改写时可用 X-Forwarded-Host 通过同源校验
     headers: { origin: 'https://127.0.0.1' },
   })
   assert.equal(sameHost.status, 200)
+})
+
+test('分享链接解析：完整链接、裸 id 与非法输入', () => {
+  assert.equal(parseShareId('https://chat.deepseek.com/share/ycwzbx6eb96tf7s2e0'), 'ycwzbx6eb96tf7s2e0')
+  assert.equal(parseShareId(' chat.deepseek.com/share/ycwzbx6eb96tf7s2e0?from=x '), 'ycwzbx6eb96tf7s2e0')
+  assert.equal(parseShareId('ycwzbx6eb96tf7s2e0'), 'ycwzbx6eb96tf7s2e0')
+  assert.equal(parseShareId('https://evil.example.com/share/ycwzbx6eb96tf7s2e0'), null)
+  assert.equal(parseShareId('https://chat.deepseek.com/a/chat/s/abc'), null)
+  assert.equal(parseShareId('../../etc'), null)
+  assert.deepEqual(parseSignedPath('/file?file_id=abc-1&state=x_Y-z'), { fileId: 'abc-1', state: 'x_Y-z' })
+  assert.equal(parseSignedPath('https://evil.example.com/file?file_id=a&state=b'), null)
+  assert.equal(parseSignedPath('/file?file_id=../x&state=b'), null)
+})
+
+test('分享导入：代取分享内容与图片预览，需要登录', async () => {
+  const { base, upstream } = await startApp()
+  const client = makeClient(base)
+  const link = encodeURIComponent('https://chat.deepseek.com/share/goodshare123')
+
+  assert.equal((await client.call('GET', `/api/share/content?url=${link}`)).status, 401)
+  await register(client)
+
+  const content = await client.call('GET', `/api/share/content?url=${link}`)
+  assert.equal(content.status, 200)
+  assert.equal(content.json.shareId, 'goodshare123')
+  assert.deepEqual(content.json.share, sampleShare)
+  const request = upstream.requests.find((item) => item.path === '/api/v0/share/content')
+  assert.equal(request.query.share_id, 'goodshare123')
+  assert.equal(request.headers.referer, 'https://chat.deepseek.com/')
+
+  const missing = await client.call('GET', '/api/share/content?url=nosuchshare')
+  assert.equal(missing.status, 404)
+  assert.equal(missing.json.error.code, 'share_not_found')
+  const invalid = await client.call('GET', `/api/share/content?url=${encodeURIComponent('https://evil.example.com/x')}`)
+  assert.equal(invalid.status, 400)
+
+  const okPath = encodeURIComponent('/file?file_id=img-ok&state=sig')
+  const image = await fetch(`${base}/api/share/file?path=${okPath}`, { headers: { cookie: client.cookie } })
+  assert.equal(image.status, 200)
+  assert.equal(image.headers.get('content-type'), 'image/jpeg')
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), sampleShareImage)
+  const fileRequest = upstream.requests.find((item) => item.path === '/api/file')
+  assert.deepEqual(fileRequest.query, { file_id: 'img-ok', state: 'sig', ty: 'p', fmt: 'jpeg' })
+
+  const gone = await client.call('GET', `/api/share/file?path=${encodeURIComponent('/file?file_id=img-gone&state=sig')}`)
+  assert.equal(gone.status, 502)
+  const badPath = await client.call('GET', `/api/share/file?path=${encodeURIComponent('http://127.0.0.1/file?file_id=a&state=b')}`)
+  assert.equal(badPath.status, 400)
 })

@@ -1,4 +1,6 @@
 import { formatDate } from '../../utils/format.js'
+import { createId } from '../../utils/id.js'
+import { requestBackend, requestJson } from '../api/backend.js'
 import * as db from './db.js'
 import { applyRemoteSummaries, replaceHistory, useChatStore } from './store.js'
 import type { Session } from './types.js'
@@ -107,6 +109,46 @@ export const importHistory = (
     const summaries = await db.commitStaging('append')
     applyRemoteSummaries(summaries)
     return Math.max(0, summaries.length - before)
+  })
+
+/**
+ * 从 DeepSeek 官网分享链接导入一条对话，追加为新会话，返回新会话 id。
+ * 分享内容和图片都由服务端代取（浏览器跨域拿不到）；单张图片下载失败只保留文件名。
+ */
+export const importShare = (link: string): Promise<string> =>
+  enqueueBackup(async () => {
+    const { share } = await requestJson<{ share: unknown }>(
+      `/api/share/content?url=${encodeURIComponent(link.trim())}`
+    )
+    const { fromShare } = await import('./history/fromShare.js')
+    const { session, images } = fromShare(share, createId())
+    await db.clearStaging()
+    try {
+      await db.addStagingSession(session)
+      const types = new Map<string, string>()
+      for (const [id, signedPath] of images) {
+        try {
+          const response = await requestBackend(
+            `/api/share/file?path=${encodeURIComponent(signedPath)}`
+          )
+          const blob = await response.blob()
+          await db.saveStagingFiles([{ id, blob }])
+          types.set(id, blob.type)
+        } catch (error) {
+          db.reportStorageError('download shared image')(error)
+        }
+      }
+      if (types.size > 0) {
+        await db.updateStagingFileTypes(types)
+      }
+    } catch (error) {
+      await db.clearStaging().catch(db.reportStorageError('clear unfinished share import'))
+      throw error
+    }
+    const summaries = await db.commitStaging('append')
+    applyRemoteSummaries(summaries)
+    // 新生成的 UUID 不会与已有会话冲突，服务端不会换 id
+    return session.id
   })
 
 /** 确认删除后调用：以空历史原子替换全部本地会话与附件，保留 API Key 和其他设置。 */

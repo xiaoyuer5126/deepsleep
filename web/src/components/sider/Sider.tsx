@@ -2,15 +2,18 @@ import clsx from 'clsx'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslate } from '../../i18n/index.js'
 import {
+  IconLinkOutline14,
   IconPanelLeftOutline16,
   IconSettingsOutline16,
   IconUploadOutline14,
   NewChatIcon,
 } from '../base/icons.js'
 import { setSiderCollapsed } from '../../services/settings.js'
-import { importHistory } from '../../services/chat/backup.js'
+import { importHistory, importShare } from '../../services/chat/backup.js'
+import { BackendError } from '../../services/api/backend.js'
+import { BackupError } from '../../services/chat/history/errors.js'
 import { groupSessions } from '../../services/chat/sessionGroups.js'
-import { newChat, removeSession, useChatStore } from '../../services/chat/store.js'
+import { newChat, removeSession, selectSession, useChatStore } from '../../services/chat/store.js'
 import type { SessionSummary } from '../../services/chat/types.js'
 import { Button } from '../base/Button.js'
 import { IconButton } from '../base/IconButton.js'
@@ -108,6 +111,7 @@ export const Sider = ({ mobile = false }: { mobile?: boolean }) => {
       </div>
       <div className={styles.bottom}>
         <SiderImportButton />
+        <SiderShareImportButton />
         <button type="button" className={styles.settings} onClick={() => openSettings('general')}>
           <span className={styles.settingsIcon}>
             <IconSettingsOutline16 />
@@ -204,6 +208,104 @@ const SiderImportButton = () => {
           void onSelect(file)
         }}
       />
+    </>
+  )
+}
+
+/** 侧边栏底部：粘贴 DeepSeek 官网分享链接，导入为一条新对话并打开 */
+const SiderShareImportButton = () => {
+  const t = useTranslate()
+  const importing = useChatStore((state) => state.importingHistory)
+  const [open, setOpen] = useState(false)
+  const [link, setLink] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const close = () => {
+    if (!busy) {
+      setOpen(false)
+      setLink('')
+    }
+  }
+
+  const onImport = async () => {
+    if (!link.trim() || busy) {
+      return
+    }
+    setBusy(true)
+    try {
+      const id = await importShare(link)
+      setOpen(false)
+      setLink('')
+      selectSession(id)
+      closeMobileSider()
+      showToast({ key: 'shareImported' })
+    } catch (error) {
+      if (error instanceof BackendError && error.status === 400) {
+        showToast({ key: 'shareImportBadLink', type: 'error' })
+      } else if (error instanceof BackendError && error.status === 404) {
+        showToast({ key: 'shareImportNotFound', type: 'error' })
+      } else if (error instanceof BackupError) {
+        showToast({ key: error.key, type: 'error' })
+      } else {
+        showToast({
+          key: 'shareImportFailed',
+          type: 'error',
+          params: { message: error instanceof Error ? error.message : String(error) },
+        })
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.settings}
+        disabled={importing}
+        onClick={() => setOpen(true)}
+      >
+        <span className={styles.settingsIcon}>
+          <IconLinkOutline14 />
+        </span>
+        <span className={styles.settingsLabel}>{t('sidebarImportShare')}</span>
+      </button>
+      {open ? (
+        <Modal
+          title={t('shareImportTitle')}
+          onClose={close}
+          footer={
+            <>
+              <Button variant="outlined" disabled={busy} onClick={close}>
+                {t('cancel')}
+              </Button>
+              <Button disabled={busy || !link.trim()} onClick={() => void onImport()}>
+                {t(busy ? 'shareImporting' : 'shareImportConfirm')}
+              </Button>
+            </>
+          }
+        >
+          <p className={styles.shareHint}>{t('shareImportDescription')}</p>
+          <input
+            className={styles.shareInput}
+            value={link}
+            onChange={(event) => setLink(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                void onImport()
+              }
+            }}
+            placeholder={t('shareImportPlaceholder')}
+            disabled={busy}
+            autoFocus
+            spellCheck={false}
+            autoComplete="off"
+            inputMode="url"
+            maxLength={500}
+          />
+        </Modal>
+      ) : null}
     </>
   )
 }

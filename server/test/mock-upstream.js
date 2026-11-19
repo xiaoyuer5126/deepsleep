@@ -81,6 +81,55 @@ const messageEvents = [
   ['message_stop', { type: 'message_stop' }],
 ]
 
+/** 官网分享接口返回的 biz_data（结构取自真实分享，内容为虚构） */
+export const sampleShare = {
+  title: 'Shared Conversation',
+  model_type: 'default',
+  messages: [
+    {
+      message_id: 1,
+      parent_id: null,
+      role: 'USER',
+      status: 'FINISHED',
+      thinking_enabled: true,
+      search_enabled: true,
+      accumulated_token_usage: 10,
+      inserted_at: 1795080000.123,
+      fragments: [{ id: 1, type: 'REQUEST', content: '测试分享导入' }],
+    },
+    {
+      message_id: 2,
+      parent_id: 1,
+      role: 'ASSISTANT',
+      status: 'FINISHED',
+      thinking_enabled: true,
+      search_enabled: true,
+      accumulated_token_usage: 50,
+      inserted_at: 1795080001.456,
+      fragments: [
+        { id: 2, type: 'THINK', content: '先搜索。', elapsed_secs: 0.5, references: [], stage_id: 1 },
+        {
+          id: 3,
+          type: 'TOOL_SEARCH',
+          status: 'FINISHED',
+          queries: [{ query: '示例' }],
+          results: [{ url: 'https://example.com/a', title: 'A', snippet: 's', published_at: 1795017600 }],
+          stage_id: 1,
+        },
+        {
+          id: 4,
+          type: 'RESPONSE',
+          content: '结论[reference:0]。',
+          references: [{ id: 3, type: 'TOOL_SEARCH', urls: ['https://example.com/a'] }],
+          stage_id: 2,
+        },
+      ],
+    },
+  ],
+}
+
+export const sampleShareImage = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])
+
 export const startMockUpstream = async ({ port = 0 } = {}) => {
   const requests = []
   let messageBodies = []
@@ -95,6 +144,33 @@ export const startMockUpstream = async ({ port = 0 } = {}) => {
       headers: req.headers,
       body,
     })
+
+    // DeepSeek 官网分享接口（分享链接导入）
+    if (url.pathname === '/api/v0/share/content' && req.method === 'GET') {
+      const found = url.searchParams.get('share_id') === 'goodshare123'
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          code: 0,
+          msg: '',
+          data: found
+            ? { biz_code: 0, biz_msg: '', biz_data: sampleShare }
+            : { biz_code: 1, biz_msg: 'share does not exist', biz_data: null },
+        })
+      )
+      return
+    }
+
+    if (url.pathname === '/api/file' && req.method === 'GET') {
+      if (url.searchParams.get('file_id') === 'img-ok' && url.searchParams.get('ty') === 'p') {
+        res.writeHead(200, { 'Content-Type': 'image/jpeg' })
+        res.end(sampleShareImage)
+      } else {
+        res.writeHead(404)
+        res.end()
+      }
+      return
+    }
 
     if (url.pathname === '/models' && req.method === 'GET') {
       const key = req.headers.authorization?.replace(/^Bearer\s+/i, '') ?? ''

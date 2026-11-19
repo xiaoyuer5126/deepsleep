@@ -59,3 +59,12 @@ chat_sessions/{session_id}_files/{file_id}_{file_name}  全部图片原件
 | [../backup.ts](../backup.ts)                                                   | 导入导出入口与串行队列         |
 
 支持单卷 ZIP32 的 STORE / DEFLATE，导出使用 STORE。ZIP64、加密、分卷及非 UTF-8 的非 ASCII 文件名不支持；条目名统一按 NFC 比较。不另设业务大小上限，但受 ZIP32 容量和浏览器资源限制，导出会生成完整下载 Blob。
+
+## 分享链接导入
+
+[fromShare.ts](./fromShare.ts) 把 DeepSeek 官网分享接口（`/api/v0/share/content`，由服务端 `/api/share/content` 代取）的内容转成上面的 `SessionFile`，再走同一套校验和 `toLocal` 转换，以追加方式提交为一条新会话。与导出 ZIP 的差异：
+
+- 时间是 Unix 秒；搜索查询词是 `{ query }` 对象；`TOOL_OPEN` 的网页信息在 `result` 里。
+- 回答保留 `[reference:N]` 角标，N 指向该回答 `references[N].urls`。导入时在角标处拆分文本块并挂上引用，展示为可点角标；找不到网址的角标去掉。
+- 图片只有 `signed_path`，由服务端 `/api/share/file` 代下预览图（`ty=p`，官网对分享不开放原图）；下载失败只保留文件名。
+- 标题固定为 "Shared Conversation"，改用第一句提问；只分享了后半段时，第一条的父消息不在分享里，当作根。
