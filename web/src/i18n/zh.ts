@@ -4,6 +4,12 @@ export const zh = {
   welcomeGreetingAfternoon: '下午好',
   welcomeGreetingEvening: '晚上好',
   welcomeGreetingLine: '{greeting}，我能帮什么忙吗？',
+  welcomeGreetingPeak: '{greeting}，现在是{period}时段，我要吃得更多哦',
+  welcomeGreetingOffPeak: '{greeting}，现在是{period}时段，尽情问我问题吧',
+  welcomePeriodPeak: '高峰',
+  welcomePeriodOffPeak: '空闲',
+  welcomePeriodHint:
+    '费用为估算：北京时间周一至周五 9:00-12:00、14:00-18:00 为高峰时段（单价翻倍），其余时段半价；法定节假日未单独扣除',
   contentCaveat: '内容由 AI 生成，请仔细甄别',
   expandSiderbarButton: '打开边栏',
   collapseSiderbarButton: '收起边栏',

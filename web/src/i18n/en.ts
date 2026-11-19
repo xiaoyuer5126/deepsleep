@@ -6,6 +6,12 @@ export const en = {
   welcomeGreetingAfternoon: 'Good afternoon',
   welcomeGreetingEvening: 'Good evening',
   welcomeGreetingLine: '{greeting}, how can I help?',
+  welcomeGreetingPeak: '{greeting}, we are in {period} hours — I get a bigger appetite!',
+  welcomeGreetingOffPeak: '{greeting}, we are in {period} hours — ask me anything!',
+  welcomePeriodPeak: 'peak',
+  welcomePeriodOffPeak: 'off-peak',
+  welcomePeriodHint:
+    'Costs are estimated in Beijing time: Mon–Fri 9:00-12:00 and 14:00-18:00 are peak (double price); all other hours are half price. Public holidays are not excluded separately.',
   contentCaveat: 'AI-generated, for reference only',
   expandSiderbarButton: 'Open sidebar',
   collapseSiderbarButton: 'Close sidebar',

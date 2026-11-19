@@ -33,7 +33,13 @@ const FALLBACK: PricingConfig = {
 
 export const getPricing = (): PricingConfig => useAuth.getState().config?.pricing ?? FALLBACK
 
-/** 北京时间周一至周五的高峰时段判断（法定节假日无法在本地判断，属于近似） */
+/** 高峰时段窗口（北京时间）；配置缺失时的兜底 */
+export const DEFAULT_PEAK_WINDOWS: [number, number][] = [
+  [9, 12],
+  [14, 18],
+]
+
+/** 北京时间周一至周五的高峰时段判断（法定节假日未单独扣除，属于估算） */
 export const isPeakTime = (timestamp: number, windows: [number, number][]): boolean => {
   const beijing = new Date(timestamp + 8 * 60 * 60 * 1000)
   const day = beijing.getUTCDay()
