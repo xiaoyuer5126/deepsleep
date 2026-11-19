@@ -9,13 +9,14 @@ import { loadConfig } from './config.js'
 import { openDatabase } from './db.js'
 import { errorHandler, sameOrigin } from './http.js'
 import { createProxyRouter } from './proxy.js'
+import { createShareRouter } from './share.js'
 import { createFileRouter, createImportRouter, createSessionRouter } from './storage.js'
 
 /**
  * 组装 Express 应用。代理、附件、导入三条路由需要各自处理请求体，
  * 因此都注册在全局 JSON 解析之前。
  */
-export const createApp = ({ config, store }) => {
+export const createApp = ({ config, store, fetchImpl }) => {
   const app = express()
   app.disable('x-powered-by')
   if (config.trustProxy) {
@@ -51,6 +52,7 @@ export const createApp = ({ config, store }) => {
   app.use('/api/auth', sameOrigin, json, createAuthRouter({ store, config }))
   app.use('/api/account', sameOrigin, json, createAccountRouter({ store, config }))
   app.use('/api/sessions', sameOrigin, json, createSessionRouter({ store, config }))
+  app.use('/api/share', sameOrigin, createShareRouter({ store, config, fetchImpl }))
 
   app.use('/api', (req, res) => {
     res.status(404).json({ error: { message: '接口不存在' } })

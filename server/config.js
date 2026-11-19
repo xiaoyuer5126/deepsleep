@@ -79,6 +79,17 @@ export const loadConfig = (overrides = {}) => {
       process.env.DEEPSEEK_API_BASE ??
       'https://api.deepseek.com'
     ).replace(/\/+$/, ''),
+    // DeepSeek 官网分享链接导入：分享内容接口与图片文件域名；测试时指向本地 mock
+    shareApiBase: (
+      overrides.shareApiBase ??
+      process.env.DEEPSEEK_SHARE_BASE ??
+      'https://chat.deepseek.com'
+    ).replace(/\/+$/, ''),
+    shareFilesBase: (
+      overrides.shareFilesBase ??
+      process.env.DEEPSEEK_SHARE_FILES_BASE ??
+      'https://files.deepseeksvc.com'
+    ).replace(/\/+$/, ''),
     // 服务器默认 API Key：账号未绑定自己的 Key 时使用。
     // 适合“一个人付费、几个人共用”的场景；留空则要求每个账号自行绑定。
     defaultApiKey: (overrides.defaultApiKey ?? process.env.DEFAULT_DEEPSEEK_API_KEY ?? '').trim(),

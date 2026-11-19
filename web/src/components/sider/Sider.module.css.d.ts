@@ -17,6 +17,8 @@ declare const styles: {
   readonly "drawer": string;
   readonly "drawerMask": string;
   readonly "mobile": string;
+  readonly "shareHint": string;
+  readonly "shareInput": string;
 };
 export = styles;
 
