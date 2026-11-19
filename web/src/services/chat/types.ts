@@ -24,6 +24,11 @@ export type FileAttachment = {
   isImage: boolean
   /** 具体 MIME；导入时没有原件或无法识别的为空字符串，不影响图片身份。 */
   mimeType: string
+  /**
+   * 图片的文字转写：deepseek-v4-pro 不支持看图（带图请求不报错，图片被直接丢掉），
+   * 发给 pro 前先由 deepseek-flash 转写一次，结果存在附件上复用，pro 收到的是这段文字。
+   */
+  transcript?: string
 }
 
 /** 本地消息的分支关系；字段缺省时按线性消息列表处理。 */
@@ -93,6 +98,8 @@ export type AssistantMessage = MessageBranch & {
   stopDetails?: StopDetails
   /** 最近一次请求的用量，续写后更新 */
   usage?: MessageUsage
+  /** 本轮发给 pro 前用 deepseek-flash 转写图片的用量（按 flash 单价计费）；images 为转写的张数 */
+  transcription?: { usage: MessageUsage; images: number }
   error?: {
     /** upload：发送前补传附件失败，请求没有发出 */
     kind: ApiErrorKind | 'upload'

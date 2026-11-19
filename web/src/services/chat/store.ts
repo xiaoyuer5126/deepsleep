@@ -19,9 +19,12 @@ import {
   applyEvent,
   canContinueReply,
   getContextRounds,
+  getImagesToTranscribe,
   settleReply,
+  supportsVision,
   toRequestMessages,
 } from './reply.js'
+import { addUsage, EMPTY_USAGE, transcribeImage, type Transcription } from './transcribe.js'
 import {
   toSessionSummary,
   type AssistantMessage,
@@ -32,7 +35,7 @@ import {
   type UserMessage,
 } from './types.js'
 
-/** deepseek-flash 同时支持深度思考与图片输入 */
+/** 没有记录模型的回答（旧数据、导入）续写时用的模型；deepseek-flash 同时支持深度思考与图片输入 */
 const MODEL: ChatModel = 'deepseek-flash'
 /** 所有生成请求统一携带的助手身份说明 */
 const SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公司创造。'
@@ -262,14 +265,14 @@ export const bindChatPersistence = () => {
   }
 }
 
-/** 按当前开关创建回复：深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
+/** 按当前开关创建回复：模型取输入框的选择，深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
 const createReply = (): AssistantMessage => {
-  const { thinking, search } = useSettings.getState()
+  const { thinking, search, model } = useSettings.getState()
   return {
     id: createId(),
     role: 'assistant',
     createdAt: Date.now(),
-    model: MODEL,
+    model,
     thinking,
     search,
     prefix: true,
@@ -835,6 +838,64 @@ const ensureServerId = async (file: FileAttachment): Promise<string | null> => {
   return uploadAttachment(file.id, blob, file.name, file.isImage)
 }
 
+/** 把转写结果写回会话里所有引用同一附件的消息 */
+const saveTranscripts = (sessionId: string, transcripts: Map<string, string>) => {
+  if (transcripts.size === 0) {
+    return
+  }
+  updateSession(sessionId, (session) => ({
+    ...session,
+    messages: session.messages.map((message) =>
+      message.role === 'user' && message.files.some((file) => transcripts.has(file.id))
+        ? {
+            ...message,
+            files: message.files.map((file) =>
+              transcripts.has(file.id) ? { ...file, transcript: transcripts.get(file.id) } : file
+            ),
+          }
+        : message
+    ),
+  }))
+  persist(sessionId)
+}
+
+/**
+ * 不能看图的模型（deepseek-v4-pro）请求前，先用 deepseek-flash 把还没转写的图片转成文字，
+ * 写回附件后复用，返回本次转写的用量。本轮提问的图片转写失败时抛出错误，不让 pro 在看不到图的情况下作答；
+ * 历史图片失败则跳过，请求里写明这张图看不到，下次发送再试。
+ */
+const transcribeImages = async (
+  sessionId: string,
+  request: Request,
+  signal: AbortSignal
+): Promise<Transcription | null> => {
+  const files = getImagesToTranscribe(request.history, request.question)
+  if (files.length === 0) {
+    return null
+  }
+  const current = new Set(request.question.files.map((file) => file.id))
+  const transcripts = new Map<string, string>()
+  let usage = EMPTY_USAGE
+  const results = await Promise.allSettled(
+    files.map(async (file) => {
+      const result = await transcribeImage(file, signal)
+      usage = addUsage(usage, result.usage)
+      if (result.text) {
+        transcripts.set(file.id, result.text)
+      }
+    })
+  )
+  saveTranscripts(sessionId, transcripts)
+  signal.throwIfAborted()
+  const failed = results.findIndex(
+    (result, index) => result.status === 'rejected' && current.has(files[index].id)
+  )
+  if (failed !== -1) {
+    throw (results[failed] as PromiseRejectedResult).reason
+  }
+  return { usage, images: transcripts.size }
+}
+
 /** 用会话里的最新消息替换请求快照：重传前会重置附件的 serverId，快照必须跟着更新 */
 const refreshRequest = (sessionId: string, request: Request): Request => {
   const session = getSession(sessionId)
@@ -1023,8 +1084,22 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
       let preparing = true
       let receivedContent = false
       try {
-        const prepared = await prepareFiles(sessionId, request, controller.signal)
+        let prepared: Request = await prepareFiles(sessionId, request, controller.signal)
         preparing = false
+        const model = initial.model ?? MODEL
+        if (!supportsVision(model)) {
+          const transcription = await transcribeImages(sessionId, prepared, controller.signal)
+          if (transcription) {
+            reply = {
+              ...reply,
+              transcription: {
+                usage: addUsage(reply.transcription?.usage ?? EMPTY_USAGE, transcription.usage),
+                images: (reply.transcription?.images ?? 0) + transcription.images,
+              },
+            }
+            prepared = refreshRequest(sessionId, prepared)
+          }
+        }
         // 附件就绪后获取本轮信息；续写沿用原回答快照，重新生成的快照独立保存。
         const latestReminder = prepared.prefix
           ? prepared.prefix.latestReminder
@@ -1037,11 +1112,12 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           prepared.question,
           prepared.prefix,
           initial.thinking ?? false,
-          latestReminder
+          latestReminder,
+          model
         )
         const events = streamMessage(
           {
-            model: initial.model ?? MODEL,
+            model,
             system: SYSTEM_PROMPT,
             messages,
             thinking: { type: initial.thinking ? 'enabled' : 'disabled' },

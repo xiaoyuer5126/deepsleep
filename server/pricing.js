@@ -39,32 +39,49 @@ export const isPeakTime = (timestamp, windows) => {
 
 const emptyBucket = () => ({ inputMiss: 0, cacheHit: 0, output: 0, searches: 0 })
 
+const addToBucket = (bucket, usage) => {
+  bucket.inputMiss += (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
+  bucket.cacheHit += usage.cache_read_input_tokens ?? 0
+  bucket.output += usage.output_tokens ?? 0
+  const tools = usage.server_tool_use ?? {}
+  bucket.searches +=
+    (tools.tool_search ?? 0) + (tools.tool_image_search ?? 0) + (tools.tool_fetch ?? 0)
+}
+
+/** 按 deepseek-v4-pro 单价计费的模型 */
+export const PRO_MODEL = 'deepseek-v4-pro'
+
 /**
  * 汇总一条会话里的用量，按「高峰 / 空闲」分桶保存，便于前端用当前单价即时换算。
- * 返回 { peak: {...}, offPeak: {...} }。
+ * 返回 { peak, offPeak, pro: { peak, offPeak } }：peak / offPeak 是全部用量，
+ * pro 是其中 deepseek-v4-pro 回答的那部分，其余按 deepseek-flash 计价。
+ * 回答的 transcription 是发给 pro 前用 deepseek-flash 转写图片的用量，计入 flash。
  */
 export const summarizeSessionUsage = (messages, windows = DEFAULT_PRICING.peakWindows, now = Date.now()) => {
-  const summary = { peak: emptyBucket(), offPeak: emptyBucket() }
+  const summary = {
+    peak: emptyBucket(),
+    offPeak: emptyBucket(),
+    pro: { peak: emptyBucket(), offPeak: emptyBucket() },
+  }
   if (!Array.isArray(messages)) {
     return summary
   }
   for (const message of messages) {
-    if (!message || message.role !== 'assistant' || !message.usage) {
+    if (!message || message.role !== 'assistant') {
       continue
     }
-    const usage = message.usage
-    const bucket = isPeakTime(
-      Number.isFinite(message.createdAt) ? message.createdAt : now,
-      windows
-    )
-      ? summary.peak
-      : summary.offPeak
-    bucket.inputMiss += (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0)
-    bucket.cacheHit += usage.cache_read_input_tokens ?? 0
-    bucket.output += usage.output_tokens ?? 0
-    const tools = usage.server_tool_use ?? {}
-    bucket.searches +=
-      (tools.tool_search ?? 0) + (tools.tool_image_search ?? 0) + (tools.tool_fetch ?? 0)
+    const key = isPeakTime(Number.isFinite(message.createdAt) ? message.createdAt : now, windows)
+      ? 'peak'
+      : 'offPeak'
+    if (message.usage) {
+      addToBucket(summary[key], message.usage)
+      if (message.model === PRO_MODEL) {
+        addToBucket(summary.pro[key], message.usage)
+      }
+    }
+    if (message.transcription?.usage) {
+      addToBucket(summary[key], message.transcription.usage)
+    }
   }
   return summary
 }

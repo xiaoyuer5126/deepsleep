@@ -179,6 +179,8 @@ export type CreateMessageRequest = {
   thinking: { type: 'enabled' | 'disabled' }
   tools: (DeepseekWebSearchTool | DeepseekReadUrlTool)[]
   title?: { enabled: boolean }
+  /** 输出上限；缺省用服务端默认值 */
+  max_tokens?: number
 }
 
 // ---------- 响应：流式事件 ----------

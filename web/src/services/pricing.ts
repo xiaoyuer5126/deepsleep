@@ -58,8 +58,15 @@ export type UsageBucket = {
   searches: number
 }
 
-/** 会话用量按高峰 / 空闲分桶（服务端汇总后下发，侧边栏据此显示每条对话的费用） */
-export type SessionUsage = { peak: UsageBucket; offPeak: UsageBucket }
+/**
+ * 会话用量按高峰 / 空闲分桶（服务端汇总后下发，侧边栏据此显示每条对话的费用）。
+ * peak / offPeak 是全部用量；pro 是其中 deepseek-v4-pro 回答的部分，其余按 deepseek-flash 计价。
+ */
+export type SessionUsage = {
+  peak: UsageBucket
+  offPeak: UsageBucket
+  pro?: { peak: UsageBucket; offPeak: UsageBucket }
+}
 
 export type CostBreakdown = {
   total: number
@@ -96,7 +103,7 @@ const bucketPrice = (
     multiplier +
   bucket.searches * webRequestPrice
 
-/** 按 usage 估算一条回答的费用；模型未知时按 deepseek-flash 计。 */
+/** 按 usage 估算一次请求的费用；模型未知时按 deepseek-flash 计。 */
 export const estimateCost = (
   usage: MessageUsage | undefined,
   model: ChatModel | null,
@@ -118,29 +125,41 @@ export const estimateCost = (
   }
 }
 
-/** 估算整条会话的费用（侧边栏用）；会话用量不区分模型，统一按 deepseek-flash 单价。 */
+const EMPTY_BUCKET: UsageBucket = { inputMiss: 0, cacheHit: 0, output: 0, searches: 0 }
+
+const subtractBucket = (a: UsageBucket, b: UsageBucket): UsageBucket => ({
+  inputMiss: Math.max(0, a.inputMiss - b.inputMiss),
+  cacheHit: Math.max(0, a.cacheHit - b.cacheHit),
+  output: Math.max(0, a.output - b.output),
+  searches: Math.max(0, a.searches - b.searches),
+})
+
+/**
+ * 估算整条会话（或整个账号）的费用（侧边栏、账号页用）：
+ * pro 部分按 deepseek-v4-pro 单价，其余按 deepseek-flash 单价。
+ */
 export const estimateSessionCost = (usage: SessionUsage | undefined | null): number => {
   if (!usage) {
     return 0
   }
   const pricing = getPricing()
-  const modelPricing = pricing.models['deepseek-flash']
-  if (!modelPricing) {
+  const flash = pricing.models['deepseek-flash']
+  if (!flash) {
     return 0
   }
-  const offPeak = bucketPrice(
-    usage.offPeak ?? { inputMiss: 0, cacheHit: 0, output: 0, searches: 0 },
-    modelPricing,
-    1,
-    pricing.webRequestPrice
-  )
-  const peak = bucketPrice(
-    usage.peak ?? { inputMiss: 0, cacheHit: 0, output: 0, searches: 0 },
-    modelPricing,
-    pricing.peakMultiplier,
-    pricing.webRequestPrice
-  )
-  return offPeak + peak
+  const pro = pricing.models['deepseek-v4-pro'] ?? flash
+  let total = 0
+  for (const [key, multiplier] of [
+    ['offPeak', 1],
+    ['peak', pricing.peakMultiplier],
+  ] as const) {
+    const all = usage[key] ?? EMPTY_BUCKET
+    const proPart = usage.pro?.[key] ?? EMPTY_BUCKET
+    total +=
+      bucketPrice(subtractBucket(all, proPart), flash, multiplier, pricing.webRequestPrice) +
+      bucketPrice(proPart, pro, multiplier, pricing.webRequestPrice)
+  }
+  return total
 }
 
 /** 金额展示：小额保留 4 位小数，大额保留 2 位。 */

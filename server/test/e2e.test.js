@@ -553,6 +553,57 @@ test('账号用量汇总：累计所有会话的 token 与联网次数', async (
   assert.equal(after.json.account.usage.offPeak.searches, 1)
 })
 
+test('用量汇总区分 pro：pro 回答单独计一份，图片转写按 flash 计入', async () => {
+  const { base } = await startApp()
+  const client = makeClient(base)
+  await register(client)
+
+  const session = sampleSession('mixed')
+  const usage = (input, output) => ({
+    input_tokens: input,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    output_tokens: output,
+  })
+  session.messages.push(
+    { id: 'm3', role: 'user', parentId: 'm2', content: '换 pro 看图', files: [], createdAt: 1700000002000 },
+    {
+      id: 'm4',
+      role: 'assistant',
+      parentId: 'm3',
+      createdAt: 1700000003000,
+      model: 'deepseek-v4-pro',
+      prefix: true,
+      status: 'done',
+      blocks: [{ type: 'text', text: '好的' }],
+      usage: usage(300, 30),
+      transcription: { usage: usage(700, 200), images: 1 },
+    }
+  )
+  await client.call('PUT', '/api/sessions/mixed', { body: { session } })
+
+  const list = await client.call('GET', '/api/sessions')
+  const summary = list.json.sessions[0].usage
+  // 全部用量 = flash 回答 100/20 + pro 回答 300/30 + 转写 700/200
+  assert.equal(summary.offPeak.inputMiss, 1100)
+  assert.equal(summary.offPeak.output, 250)
+  // pro 部分只含 pro 回答本身，转写不算 pro
+  assert.equal(summary.pro.offPeak.inputMiss, 300)
+  assert.equal(summary.pro.offPeak.output, 30)
+  assert.equal(summary.pro.peak.inputMiss, 0)
+
+  const account = await client.call('GET', '/api/account')
+  assert.equal(account.json.account.usage.pro.offPeak.inputMiss, 300)
+  assert.equal(account.json.account.usage.offPeak.inputMiss, 1100)
+
+  // 消息上的 transcription 与附件上的 transcript 原样保存
+  session.messages[0].files[0].transcript = '一张红色的图'
+  await client.call('PUT', '/api/sessions/mixed', { body: { session } })
+  const detail = await client.call('GET', '/api/sessions/mixed')
+  assert.equal(detail.json.session.messages[0].files[0].transcript, '一张红色的图')
+  assert.equal(detail.json.session.messages[3].transcription.images, 1)
+})
+
 test('跨站写请求被拒绝', async () => {
   const { base } = await startApp()
   const client = makeClient(base)

@@ -1,5 +1,6 @@
 import type {
   AssistantBlockParam,
+  ChatModel,
   FileBlockParam,
   MessageParam,
   MessageStreamEvent,
@@ -15,13 +16,35 @@ import type {
   UserMessage,
 } from './types.js'
 
+/** 能直接看图的模型；deepseek-v4-pro 收到图片不会报错，而是把图丢掉后照常作答。 */
+export const supportsVision = (model: ChatModel | null) => model !== 'deepseek-v4-pro'
+
+/** 给不能看图的模型转写图片用的模型 */
+export const TRANSCRIBE_MODEL: ChatModel = 'deepseek-flash'
+
+/** 转写图片的提示：要求完整、原样，供看不到图片的模型回答问题 */
+export const TRANSCRIBE_PROMPT =
+  '请把这张图片完整转写成文字，供一个看不到图片的助手回答用户的问题：先一句话概括，再描述布局、所有可见文字（原样转写）、表格与数据、关键细节。只写图里有的内容，不要推测图外信息。'
+
+/** 转写后的图片在请求里的写法 */
+export const transcribedImageText = (name: string, transcript: string | undefined) =>
+  transcript
+    ? `[图片「${name}」由 ${TRANSCRIBE_MODEL} 转写成文字，内容如下]\n${transcript}`
+    : `[图片「${name}」未能转写，你看不到这张图片的内容]`
+
+type AttachmentBlock = FileBlockParam | TextBlockParam
+
 /**
  * 文件按 Files API 的 file_id（附件的 serverId）引用：图片用 image 块，其余用 document 块。
  * 发送前 streamReply 会先补齐 serverId；仍为 null 的是本地没有原件的附件，不进入请求。
+ * 不能看图的模型：图片换成 deepseek-flash 的文字转写；没有转写的写明看不到，免得模型凭空作答。
  */
-const toFileBlocks = (files: FileAttachment[]): FileBlockParam[] =>
-  files.flatMap(({ serverId, isImage }) =>
-    serverId
+const toFileBlocks = (files: FileAttachment[], vision = true): AttachmentBlock[] =>
+  files.flatMap(({ serverId, isImage, name, transcript }): AttachmentBlock[] => {
+    if (isImage && !vision && (serverId || transcript)) {
+      return [{ type: 'text', text: transcribedImageText(name, transcript) }]
+    }
+    return serverId
       ? [
           {
             type: isImage ? 'image' : 'document',
@@ -29,7 +52,7 @@ const toFileBlocks = (files: FileAttachment[]): FileBlockParam[] =>
           },
         ]
       : []
-  )
+  })
 
 const toReplyBlock = (block: OutputBlockStart, now: number): ReplyBlock | null => {
   switch (block.type) {
@@ -202,8 +225,8 @@ const isUsableReply = (message: Message): message is AssistantMessage =>
   getReplyText(message) !== ''
 
 /** 有文件时用内容块数组：先文件后文本，文件按 Files API 的 file_id 引用 */
-const toUserParam = ({ content, files }: UserMessage): MessageParam => {
-  const blocks = toFileBlocks(files)
+const toUserParam = ({ content, files }: UserMessage, vision = true): MessageParam => {
+  const blocks = toFileBlocks(files, vision)
   return blocks.length === 0
     ? { role: 'user', content }
     : {
@@ -305,8 +328,10 @@ export const toRequestMessages = (
   question: UserMessage,
   prefix?: AssistantMessage,
   thinking = prefix?.thinking ?? false,
-  latestReminder?: string
+  latestReminder?: string,
+  model: ChatModel | null = null
 ): MessageParam[] => {
+  const vision = supportsVision(model)
   const messages: MessageParam[] = []
   let previousReminder: string | undefined
   const appendReminder = (reminder: string | undefined) => {
@@ -318,14 +343,14 @@ export const toRequestMessages = (
   }
   for (const [user, reply] of getContextRounds(history)) {
     // 历史提问没有文字、附件也都没有 serverId 时，提问为空，连同回答一起省略。
-    if (!user.content && toFileBlocks(user.files).length === 0) {
+    if (!user.content && toFileBlocks(user.files, vision).length === 0) {
       continue
     }
     appendReminder(reply.latestReminder)
-    messages.push(toUserParam(user), toAssistantParam(reply))
+    messages.push(toUserParam(user, vision), toAssistantParam(reply))
   }
   appendReminder(latestReminder)
-  messages.push(toUserParam(question))
+  messages.push(toUserParam(question, vision))
   if (prefix?.prefix) {
     const assistant = toAssistantParam(prefix, true, thinking)
     // 没有非空白正文或有效思考时直接重发原问题，避免服务端拒绝空 Prefill。
@@ -340,6 +365,26 @@ export const toRequestMessages = (
     }
   }
   return messages
+}
+
+/**
+ * 本次请求里要先转写的图片：本轮提问和进入上下文的历史提问中，已上传、还没有转写的图片，
+ * 同一附件只转一次。
+ */
+export const getImagesToTranscribe = (
+  history: Message[],
+  question: UserMessage
+): FileAttachment[] => {
+  const pending = new Map<string, FileAttachment>()
+  const users = [question, ...getContextRounds(history).map(([user]) => user)]
+  for (const user of users) {
+    for (const file of user.files) {
+      if (file.isImage && file.serverId && !file.transcript && !pending.has(file.id)) {
+        pending.set(file.id, file)
+      }
+    }
+  }
+  return [...pending.values()]
 }
 
 /** 思考用时（秒），至少 1 秒 */
