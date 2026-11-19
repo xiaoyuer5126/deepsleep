@@ -122,6 +122,8 @@ export type Session = {
   messages: Message[]
   /** undefined 表示线性消息列表；null 表示空会话。 */
   rootMessageId?: string | null
+  /** 输入框为这个对话选的模型；缺省时沿用最近一条回答的模型，再缺省用 deepseek-flash。 */
+  model?: ChatModel
 }
 
 /** 会话列表元数据；消息只在打开会话时加载。pinned / usage 由服务端返回。 */

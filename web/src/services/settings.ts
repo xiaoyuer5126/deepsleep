@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import type { ChatModel } from './api/types.js'
 import type { TtsVoice } from './api/speech.js'
 import { normalizeLocation, type UserLocation } from './location.js'
 
@@ -16,8 +15,6 @@ type Settings = {
   ttsVoice: TtsVoice
   thinking: boolean
   search: boolean
-  /** 输入框选择的模型：每条消息按发送时的选择请求，记住上次的选择 */
-  model: ChatModel
   siderCollapsed: boolean
 }
 
@@ -28,7 +25,6 @@ const KEYS = {
   ttsVoice: 'chat-demo:tts-voice',
   thinking: 'chat-demo:thinking',
   search: 'chat-demo:search',
-  model: 'chat-demo:model',
   siderCollapsed: 'chat-demo:sider-collapsed',
 } as const
 
@@ -96,7 +92,6 @@ export const useSettings = create<Settings>(() => ({
   ttsVoice: initialTtsVoice(),
   thinking: read(KEYS.thinking) === 'true',
   search: read(KEYS.search) === 'true',
-  model: read(KEYS.model) === 'deepseek-v4-pro' ? 'deepseek-v4-pro' : 'deepseek-flash',
   siderCollapsed: read(KEYS.siderCollapsed) === 'true',
 }))
 
@@ -129,11 +124,6 @@ export const setThinking = (thinking: boolean) => {
 export const setSearch = (search: boolean) => {
   write(KEYS.search, String(search))
   useSettings.setState({ search })
-}
-
-export const setModel = (model: ChatModel) => {
-  write(KEYS.model, model)
-  useSettings.setState({ model })
 }
 
 export const setSiderCollapsed = (siderCollapsed: boolean) => {

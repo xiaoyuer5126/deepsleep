@@ -107,6 +107,10 @@ export const sanitizeSession = (value, expectedId) => {
   if (Object.hasOwn(value, 'rootMessageId')) {
     session.rootMessageId = value.rootMessageId
   }
+  // 输入框为这个对话选的模型（每个对话单独记）
+  if (value.model === 'deepseek-flash' || value.model === 'deepseek-v4-pro') {
+    session.model = value.model
+  }
   if (session.messages.length > 20000) {
     throw fail('单条会话消息过多')
   }

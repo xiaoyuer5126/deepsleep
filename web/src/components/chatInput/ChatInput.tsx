@@ -7,9 +7,15 @@ import {
   IconStopFill16,
   IconThinkOutline14,
 } from '../base/icons.js'
-import { setModel, setSearch, setThinking, useSettings } from '../../services/settings.js'
+import { setSearch, setThinking, useSettings } from '../../services/settings.js'
 import { useIsMobile } from '../../app/viewport.js'
-import { sendMessage, stopReply, useChatStore } from '../../services/chat/store.js'
+import {
+  getSessionModel,
+  sendMessage,
+  setSessionModel,
+  stopReply,
+  useChatStore,
+} from '../../services/chat/store.js'
 import { getVisibleMessages } from '../../services/chat/branches.js'
 import { supportsVision } from '../../services/chat/reply.js'
 import {
@@ -55,7 +61,10 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
   const importingHistory = useChatStore((state) => state.importingHistory)
   const isMobile = useIsMobile()
   const search = useSettings((state) => state.search)
-  const model = useSettings((state) => state.model)
+  // 每个对话单独记模型；新对话用欢迎页上的选择
+  const model = useChatStore((state) =>
+    sessionId === null ? state.newChatModel : getSessionModel(state.sessionCache[sessionId])
+  )
   const pro = model === 'deepseek-v4-pro'
   // 选了看不到图的模型、而草稿或当前对话里有图片时，提示图片会先由 flash 转成文字。
   const historyHasImage = useChatStore((state) => {
@@ -244,14 +253,14 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
               <span className={styles.toggleLabel}>{t('search')}</span>
             </button>
           </Tooltip>
-          {/* 每条消息按发送时的选择请求，记住上次的选择 */}
+          {/* 每条消息按发送时的选择请求；选择记在这个对话上 */}
           <Tooltip content={t('modelProTooltip')}>
             <button
               type="button"
               className={clsx(styles.toggle, pro && styles.selected)}
               aria-label={t('modelProSwitch')}
               aria-pressed={pro}
-              onClick={() => setModel(pro ? 'deepseek-flash' : 'deepseek-v4-pro')}
+              onClick={() => setSessionModel(sessionId, pro ? 'deepseek-flash' : 'deepseek-v4-pro')}
             >
               <span>{t('modelProSwitch')}</span>
             </button>

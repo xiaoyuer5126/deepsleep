@@ -553,7 +553,7 @@ test('账号用量汇总：累计所有会话的 token 与联网次数', async (
   assert.equal(after.json.account.usage.offPeak.searches, 1)
 })
 
-test('用量汇总区分 pro：pro 回答单独计一份，图片转写按 flash 计入', async () => {
+test('用量汇总区分 pro：pro 回答单独计一份，图片转写按 flash 计入；对话记住自己的模型', async () => {
   const { base } = await startApp()
   const client = makeClient(base)
   await register(client)
@@ -596,12 +596,20 @@ test('用量汇总区分 pro：pro 回答单独计一份，图片转写按 flash
   assert.equal(account.json.account.usage.pro.offPeak.inputMiss, 300)
   assert.equal(account.json.account.usage.offPeak.inputMiss, 1100)
 
-  // 消息上的 transcription 与附件上的 transcript 原样保存
+  // 消息上的 transcription、附件上的 transcript、对话上选的模型原样保存
   session.messages[0].files[0].transcript = '一张红色的图'
+  session.model = 'deepseek-v4-pro'
   await client.call('PUT', '/api/sessions/mixed', { body: { session } })
   const detail = await client.call('GET', '/api/sessions/mixed')
   assert.equal(detail.json.session.messages[0].files[0].transcript, '一张红色的图')
   assert.equal(detail.json.session.messages[3].transcription.images, 1)
+  assert.equal(detail.json.session.model, 'deepseek-v4-pro')
+
+  // 不认识的模型名不保存
+  session.model = 'gpt-x'
+  await client.call('PUT', '/api/sessions/mixed', { body: { session } })
+  const again = await client.call('GET', '/api/sessions/mixed')
+  assert.equal(again.json.session.model, undefined)
 })
 
 test('跨站写请求被拒绝', async () => {

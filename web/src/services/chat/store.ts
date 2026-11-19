@@ -74,6 +74,8 @@ type ChatState = {
   activeId: string | null
   /** 正在生成回复的会话 */
   streaming: Record<string, AbortController>
+  /** 新对话（欢迎页）输入框选的模型，发出第一条消息时记到新对话上 */
+  newChatModel: ChatModel
 }
 
 export const useChatStore = create<ChatState>(() => ({
@@ -86,6 +88,7 @@ export const useChatStore = create<ChatState>(() => ({
   sessionSaveErrors: {},
   activeId: null,
   streaming: {},
+  newChatModel: MODEL,
 }))
 
 const { getState: get, setState: set } = useChatStore
@@ -265,9 +268,40 @@ export const bindChatPersistence = () => {
   }
 }
 
-/** 按当前开关创建回复：模型取输入框的选择，深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
-const createReply = (): AssistantMessage => {
-  const { thinking, search, model } = useSettings.getState()
+/**
+ * 对话当前选的模型：对话上记着的选择；旧对话没记过的沿用最近一条回答的模型，再缺省用 deepseek-flash。
+ * 还没发出第一条消息的新对话用 newChatModel。
+ */
+export const getSessionModel = (session: Session | undefined): ChatModel => {
+  if (!session) {
+    return MODEL
+  }
+  if (session.model) {
+    return session.model
+  }
+  const last = getVisibleMessages(session).findLast(
+    (message): message is AssistantMessage => message.role === 'assistant' && !!message.model
+  )
+  return last?.model ?? MODEL
+}
+
+/** 输入框切换模型：每个对话单独记，新对话记在发出第一条消息前的临时状态里。 */
+export const setSessionModel = (sessionId: string | null, model: ChatModel) => {
+  if (sessionId === null) {
+    set({ newChatModel: model })
+    return
+  }
+  const session = getSession(sessionId)
+  if (!session || getSessionModel(session) === model || deletingSessions.has(sessionId)) {
+    return
+  }
+  updateSession(sessionId, (current) => ({ ...current, model }))
+  persist(sessionId)
+}
+
+/** 按当前开关创建回复：模型取这个对话的选择，深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
+const createReply = (model: ChatModel): AssistantMessage => {
+  const { thinking, search } = useSettings.getState()
   return {
     id: createId(),
     role: 'assistant',
@@ -617,6 +651,7 @@ export const sendMessage = (targetSessionId: string | null) => {
       updatedAt: now,
       messages: [],
       rootMessageId: null,
+      model: get().newChatModel,
     }
     sessionId = session.id
     touchSession(session.id)
@@ -624,6 +659,8 @@ export const sendMessage = (targetSessionId: string | null) => {
       sessions: [toSessionSummary(session), ...state.sessions],
       sessionCache: { ...state.sessionCache, [session.id]: session },
       activeId: session.id,
+      // 选择已记到这个对话上，下一个新对话重新从 flash 开始
+      newChatModel: MODEL,
     }))
   }
   const current = getSession(sessionId)
@@ -645,7 +682,7 @@ export const sendMessage = (targetSessionId: string | null) => {
     })),
     createdAt: now,
   }
-  const reply = createReply()
+  const reply = createReply(getSessionModel(current))
   updateSession(sessionId, (session) => ({
     ...appendBranch(session, history.at(-1)?.id ?? null, [question, reply]),
     updatedAt: now,
@@ -679,7 +716,7 @@ export const regenerateReply = (sessionId: string, messageId?: string) => {
     return
   }
   const history = path.slice(0, index - 1)
-  const reply = createReply()
+  const reply = createReply(getSessionModel(session))
   updateSession(sessionId, (s) => ({
     ...appendBranch(s, question.id, [reply]),
     updatedAt: Date.now(),
@@ -711,7 +748,7 @@ export const editMessage = (sessionId: string, messageId: string, content: strin
     files: previous.files,
     createdAt: Date.now(),
   }
-  const reply = createReply()
+  const reply = createReply(getSessionModel(session))
   updateSession(sessionId, (s) => ({
     ...appendBranch(s, path[index - 1]?.id ?? null, [question, reply]),
     updatedAt: Date.now(),
@@ -1235,6 +1272,7 @@ export const resetChatStore = () => {
     sessionSaveErrors: {},
     activeId: null,
     streaming: {},
+    newChatModel: MODEL,
   })
 }
 
