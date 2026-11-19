@@ -19,9 +19,12 @@ import {
   applyEvent,
   canContinueReply,
   getContextRounds,
+  getImagesToTranscribe,
   settleReply,
+  supportsVision,
   toRequestMessages,
 } from './reply.js'
+import { addUsage, EMPTY_USAGE, transcribeImage, type Transcription } from './transcribe.js'
 import {
   toSessionSummary,
   type AssistantMessage,
@@ -32,7 +35,7 @@ import {
   type UserMessage,
 } from './types.js'
 
-/** deepseek-flash 同时支持深度思考与图片输入 */
+/** 没有记录模型的回答（旧数据、导入）续写时用的模型；deepseek-flash 同时支持深度思考与图片输入 */
 const MODEL: ChatModel = 'deepseek-flash'
 /** 所有生成请求统一携带的助手身份说明 */
 const SYSTEM_PROMPT = '该助手为DeepSeek，由深度求索公司创造。'
@@ -71,6 +74,8 @@ type ChatState = {
   activeId: string | null
   /** 正在生成回复的会话 */
   streaming: Record<string, AbortController>
+  /** 新对话（欢迎页）输入框选的模型，发出第一条消息时记到新对话上 */
+  newChatModel: ChatModel
 }
 
 export const useChatStore = create<ChatState>(() => ({
@@ -83,6 +88,7 @@ export const useChatStore = create<ChatState>(() => ({
   sessionSaveErrors: {},
   activeId: null,
   streaming: {},
+  newChatModel: MODEL,
 }))
 
 const { getState: get, setState: set } = useChatStore
@@ -262,14 +268,45 @@ export const bindChatPersistence = () => {
   }
 }
 
-/** 按当前开关创建回复：深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
-const createReply = (): AssistantMessage => {
+/**
+ * 对话当前选的模型：对话上记着的选择；旧对话没记过的沿用最近一条回答的模型，再缺省用 deepseek-flash。
+ * 还没发出第一条消息的新对话用 newChatModel。
+ */
+export const getSessionModel = (session: Session | undefined): ChatModel => {
+  if (!session) {
+    return MODEL
+  }
+  if (session.model) {
+    return session.model
+  }
+  const last = getVisibleMessages(session).findLast(
+    (message): message is AssistantMessage => message.role === 'assistant' && !!message.model
+  )
+  return last?.model ?? MODEL
+}
+
+/** 输入框切换模型：每个对话单独记，新对话记在发出第一条消息前的临时状态里。 */
+export const setSessionModel = (sessionId: string | null, model: ChatModel) => {
+  if (sessionId === null) {
+    set({ newChatModel: model })
+    return
+  }
+  const session = getSession(sessionId)
+  if (!session || getSessionModel(session) === model || deletingSessions.has(sessionId)) {
+    return
+  }
+  updateSession(sessionId, (current) => ({ ...current, model }))
+  persist(sessionId)
+}
+
+/** 按当前开关创建回复：模型取这个对话的选择，深度思考对应 thinking，智能搜索控制 deepseek_web_search。 */
+const createReply = (model: ChatModel): AssistantMessage => {
   const { thinking, search } = useSettings.getState()
   return {
     id: createId(),
     role: 'assistant',
     createdAt: Date.now(),
-    model: MODEL,
+    model,
     thinking,
     search,
     prefix: true,
@@ -614,6 +651,7 @@ export const sendMessage = (targetSessionId: string | null) => {
       updatedAt: now,
       messages: [],
       rootMessageId: null,
+      model: get().newChatModel,
     }
     sessionId = session.id
     touchSession(session.id)
@@ -621,6 +659,8 @@ export const sendMessage = (targetSessionId: string | null) => {
       sessions: [toSessionSummary(session), ...state.sessions],
       sessionCache: { ...state.sessionCache, [session.id]: session },
       activeId: session.id,
+      // 选择已记到这个对话上，下一个新对话重新从 flash 开始
+      newChatModel: MODEL,
     }))
   }
   const current = getSession(sessionId)
@@ -642,7 +682,7 @@ export const sendMessage = (targetSessionId: string | null) => {
     })),
     createdAt: now,
   }
-  const reply = createReply()
+  const reply = createReply(getSessionModel(current))
   updateSession(sessionId, (session) => ({
     ...appendBranch(session, history.at(-1)?.id ?? null, [question, reply]),
     updatedAt: now,
@@ -676,7 +716,7 @@ export const regenerateReply = (sessionId: string, messageId?: string) => {
     return
   }
   const history = path.slice(0, index - 1)
-  const reply = createReply()
+  const reply = createReply(getSessionModel(session))
   updateSession(sessionId, (s) => ({
     ...appendBranch(s, question.id, [reply]),
     updatedAt: Date.now(),
@@ -708,7 +748,7 @@ export const editMessage = (sessionId: string, messageId: string, content: strin
     files: previous.files,
     createdAt: Date.now(),
   }
-  const reply = createReply()
+  const reply = createReply(getSessionModel(session))
   updateSession(sessionId, (s) => ({
     ...appendBranch(s, path[index - 1]?.id ?? null, [question, reply]),
     updatedAt: Date.now(),
@@ -833,6 +873,64 @@ const ensureServerId = async (file: FileAttachment): Promise<string | null> => {
     return null
   }
   return uploadAttachment(file.id, blob, file.name, file.isImage)
+}
+
+/** 把转写结果写回会话里所有引用同一附件的消息 */
+const saveTranscripts = (sessionId: string, transcripts: Map<string, string>) => {
+  if (transcripts.size === 0) {
+    return
+  }
+  updateSession(sessionId, (session) => ({
+    ...session,
+    messages: session.messages.map((message) =>
+      message.role === 'user' && message.files.some((file) => transcripts.has(file.id))
+        ? {
+            ...message,
+            files: message.files.map((file) =>
+              transcripts.has(file.id) ? { ...file, transcript: transcripts.get(file.id) } : file
+            ),
+          }
+        : message
+    ),
+  }))
+  persist(sessionId)
+}
+
+/**
+ * 不能看图的模型（deepseek-v4-pro）请求前，先用 deepseek-flash 把还没转写的图片转成文字，
+ * 写回附件后复用，返回本次转写的用量。本轮提问的图片转写失败时抛出错误，不让 pro 在看不到图的情况下作答；
+ * 历史图片失败则跳过，请求里写明这张图看不到，下次发送再试。
+ */
+const transcribeImages = async (
+  sessionId: string,
+  request: Request,
+  signal: AbortSignal
+): Promise<Transcription | null> => {
+  const files = getImagesToTranscribe(request.history, request.question)
+  if (files.length === 0) {
+    return null
+  }
+  const current = new Set(request.question.files.map((file) => file.id))
+  const transcripts = new Map<string, string>()
+  let usage = EMPTY_USAGE
+  const results = await Promise.allSettled(
+    files.map(async (file) => {
+      const result = await transcribeImage(file, signal)
+      usage = addUsage(usage, result.usage)
+      if (result.text) {
+        transcripts.set(file.id, result.text)
+      }
+    })
+  )
+  saveTranscripts(sessionId, transcripts)
+  signal.throwIfAborted()
+  const failed = results.findIndex(
+    (result, index) => result.status === 'rejected' && current.has(files[index].id)
+  )
+  if (failed !== -1) {
+    throw (results[failed] as PromiseRejectedResult).reason
+  }
+  return { usage, images: transcripts.size }
 }
 
 /** 用会话里的最新消息替换请求快照：重传前会重置附件的 serverId，快照必须跟着更新 */
@@ -1023,8 +1121,22 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
       let preparing = true
       let receivedContent = false
       try {
-        const prepared = await prepareFiles(sessionId, request, controller.signal)
+        let prepared: Request = await prepareFiles(sessionId, request, controller.signal)
         preparing = false
+        const model = initial.model ?? MODEL
+        if (!supportsVision(model)) {
+          const transcription = await transcribeImages(sessionId, prepared, controller.signal)
+          if (transcription) {
+            reply = {
+              ...reply,
+              transcription: {
+                usage: addUsage(reply.transcription?.usage ?? EMPTY_USAGE, transcription.usage),
+                images: (reply.transcription?.images ?? 0) + transcription.images,
+              },
+            }
+            prepared = refreshRequest(sessionId, prepared)
+          }
+        }
         // 附件就绪后获取本轮信息；续写沿用原回答快照，重新生成的快照独立保存。
         const latestReminder = prepared.prefix
           ? prepared.prefix.latestReminder
@@ -1037,11 +1149,12 @@ const streamReply = async (sessionId: string, initial: AssistantMessage, request
           prepared.question,
           prepared.prefix,
           initial.thinking ?? false,
-          latestReminder
+          latestReminder,
+          model
         )
         const events = streamMessage(
           {
-            model: initial.model ?? MODEL,
+            model,
             system: SYSTEM_PROMPT,
             messages,
             thinking: { type: initial.thinking ? 'enabled' : 'disabled' },
@@ -1159,6 +1272,7 @@ export const resetChatStore = () => {
     sessionSaveErrors: {},
     activeId: null,
     streaming: {},
+    newChatModel: MODEL,
   })
 }
 

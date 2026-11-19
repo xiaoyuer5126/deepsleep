@@ -107,6 +107,10 @@ export const sanitizeSession = (value, expectedId) => {
   if (Object.hasOwn(value, 'rootMessageId')) {
     session.rootMessageId = value.rootMessageId
   }
+  // 输入框为这个对话选的模型（每个对话单独记）
+  if (value.model === 'deepseek-flash' || value.model === 'deepseek-v4-pro') {
+    session.model = value.model
+  }
   if (session.messages.length > 20000) {
     throw fail('单条会话消息过多')
   }
@@ -374,7 +378,16 @@ export class Store {
   /** 账号下全部会话的用量合计（用于「账号」页显示累计花费） */
   getUserUsage(userId) {
     const empty = () => ({ inputMiss: 0, cacheHit: 0, output: 0, searches: 0 })
-    const total = { peak: empty(), offPeak: empty() }
+    const total = { peak: empty(), offPeak: empty(), pro: { peak: empty(), offPeak: empty() } }
+    const add = (target, bucket) => {
+      if (!bucket) {
+        return
+      }
+      target.inputMiss += bucket.inputMiss ?? 0
+      target.cacheHit += bucket.cacheHit ?? 0
+      target.output += bucket.output ?? 0
+      target.searches += bucket.searches ?? 0
+    }
     const rows = this.db
       .prepare('SELECT usage FROM conversations WHERE user_id = ?')
       .all(userId)
@@ -389,14 +402,8 @@ export class Store {
         continue
       }
       for (const key of ['peak', 'offPeak']) {
-        const bucket = usage?.[key]
-        if (!bucket) {
-          continue
-        }
-        total[key].inputMiss += bucket.inputMiss ?? 0
-        total[key].cacheHit += bucket.cacheHit ?? 0
-        total[key].output += bucket.output ?? 0
-        total[key].searches += bucket.searches ?? 0
+        add(total[key], usage?.[key])
+        add(total.pro[key], usage?.pro?.[key])
       }
     }
     return total

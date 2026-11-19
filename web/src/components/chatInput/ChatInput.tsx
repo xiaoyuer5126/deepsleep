@@ -9,7 +9,15 @@ import {
 } from '../base/icons.js'
 import { setSearch, setThinking, useSettings } from '../../services/settings.js'
 import { useIsMobile } from '../../app/viewport.js'
-import { sendMessage, stopReply, useChatStore } from '../../services/chat/store.js'
+import {
+  getSessionModel,
+  sendMessage,
+  setSessionModel,
+  stopReply,
+  useChatStore,
+} from '../../services/chat/store.js'
+import { getVisibleMessages } from '../../services/chat/branches.js'
+import { supportsVision } from '../../services/chat/reply.js'
 import {
   addDraftFiles,
   EMPTY_DRAFT,
@@ -34,7 +42,7 @@ import { Spectrum } from './Spectrum.js'
 import { useTranslate } from '../../i18n/index.js'
 import styles from './ChatInput.module.css'
 
-/** 输入框：自适应高度的文本框 + 文件 + 深度思考与智能搜索开关 + 语音输入 + 发送 / 停止 */
+/** 输入框：自适应高度的文本框 + 文件 + 深度思考、智能搜索与 Pro 模型开关 + 语音输入 + 发送 / 停止 */
 export const ChatInput = memo(function ChatInput({ sessionId }: { sessionId: string | null }) {
   // 切换目标时释放录音、转写和 DOM 状态；文字与附件由草稿服务保留。
   return <Input key={sessionId === null ? 'new' : `session:${sessionId}`} sessionId={sessionId} />
@@ -53,6 +61,24 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
   const importingHistory = useChatStore((state) => state.importingHistory)
   const isMobile = useIsMobile()
   const search = useSettings((state) => state.search)
+  // 每个对话单独记模型；新对话用欢迎页上的选择
+  const model = useChatStore((state) =>
+    sessionId === null ? state.newChatModel : getSessionModel(state.sessionCache[sessionId])
+  )
+  const pro = model === 'deepseek-v4-pro'
+  // 选了看不到图的模型、而草稿或当前对话里有图片时，提示图片会先由 flash 转成文字。
+  const historyHasImage = useChatStore((state) => {
+    const session = sessionId === null ? undefined : state.sessionCache[sessionId]
+    return (
+      session !== undefined &&
+      getVisibleMessages(session).some(
+        (message) => message.role === 'user' && message.files.some((file) => file.isImage)
+      )
+    )
+  })
+  const showImageHint =
+    !supportsVision(model) &&
+    (historyHasImage || attachments.some((attachment) => attachment.isImage))
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const togglesRef = useRef<HTMLDivElement>(null)
@@ -161,6 +187,7 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
         }
       }}
     >
+      {showImageHint ? <div className={styles.modelHint}>{t('chatInputProImageHint')}</div> : null}
       <DraftAttachments items={attachments} onRetry={retryFile} onRemove={removeFile} />
       <div className={styles.textareaWrapper}>
         <textarea
@@ -224,6 +251,18 @@ const Input = ({ sessionId }: { sessionId: string | null }) => {
             >
               <IconGlobeLanguageOutline14 />
               <span className={styles.toggleLabel}>{t('search')}</span>
+            </button>
+          </Tooltip>
+          {/* 每条消息按发送时的选择请求；选择记在这个对话上 */}
+          <Tooltip content={t('modelProTooltip')}>
+            <button
+              type="button"
+              className={clsx(styles.toggle, pro && styles.selected)}
+              aria-label={t('modelProSwitch')}
+              aria-pressed={pro}
+              onClick={() => setSessionModel(sessionId, pro ? 'deepseek-flash' : 'deepseek-v4-pro')}
+            >
+              <span>{t('modelProSwitch')}</span>
             </button>
           </Tooltip>
         </div>

@@ -171,6 +171,10 @@ export const zh = {
   thinkingSwitch: '深度思考',
   deactivatedSearchTooltip: '按需搜索网页',
   search: '智能搜索',
+  modelProSwitch: 'Pro',
+  modelProTooltip:
+    '本条用 deepseek-v4-pro 回答：能力更强，单价约为 flash 的 3～7 倍。Pro 看不到图片，图片会先由 flash 转成文字',
+  chatInputProImageHint: 'Pro 看不到图片：发送时会先由 flash 把图片转成文字再交给 Pro，图里的细节可能丢失',
   uploadFile: '上传文件',
   chatInputStopButtonTooltip: '停止生成',
   uploadMaxMBSize: '单个文件大小超过限制（{size}MB），请调整后重试',
@@ -261,6 +265,11 @@ export const zh = {
   accountPasswordFailed: '修改失败：{message}',
 
   // 费用估算
+  messageModelPro: 'Pro',
+  messageModelProTooltip: '这条回答由 deepseek-v4-pro 生成',
+  messageTranscribedLabel: '图片由 flash 转写',
+  messageTranscribedTooltip:
+    '{count} 张图片先由 deepseek-flash 转写成文字再交给 Pro，Pro 只看到文字描述。转写约 ¥{cost}，已计入本条费用。',
   messageCostLabel: '≈¥{cost}',
   messageCostTooltip:
     '本次约 ¥{cost}：输入 {input} tokens（缓存命中 {cached}），输出 {output} tokens，联网 {searches} 次。仅供参考，以账单为准。',

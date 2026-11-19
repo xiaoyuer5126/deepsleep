@@ -235,6 +235,13 @@
   }
 }
 
+.modelHint {
+  margin: 10px 16px 0;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .functionRow {
   display: flex;
   align-items: center;
